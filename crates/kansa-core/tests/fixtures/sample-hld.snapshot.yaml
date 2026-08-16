@@ -1,0 +1,290 @@
+doc: docs/hld.md
+sha: 91ade7c205550638eaec0ff27c9f53ca800b3411
+segmenter: 1
+spans:
+- id: s-156bef76
+  ord: 0
+  block: heading
+  text: Intake Service — High-Level Design
+  h: 156bef76a1c67bab
+  start: 0
+  end: 39
+  section: Intake Service — High-Level Design
+  depth: 1
+- id: s-91426c22
+  ord: 1
+  block: heading
+  text: 1. Purpose
+  h: 91426c22c0c15512
+  start: 40
+  end: 54
+  section: 1. Purpose
+  depth: 2
+- id: s-e5f970d8
+  ord: 2
+  block: para
+  text: The intake service accepts applications from the public web form and the partner API.
+  h: e5f970d871947204
+  start: 55
+  end: 140
+  section: 1. Purpose
+- id: s-656153bf
+  ord: 3
+  block: para
+  text: It validates them, assigns a case number, and hands them to the case-management queue.
+  h: 656153bf5bfdb0c0
+  start: 141
+  end: 227
+  section: 1. Purpose
+- id: s-f1e93fad
+  ord: 4
+  block: para
+  text: This document describes the intended behaviour; implementation details live in the ADRs.
+  h: f1e93fad5e950739
+  start: 228
+  end: 316
+  section: 1. Purpose
+- id: s-ccb3756f
+  ord: 5
+  block: heading
+  text: 2. Validation
+  h: ccb3756fc7adfc4d
+  start: 318
+  end: 335
+  section: 2. Validation
+  depth: 2
+- id: s-17c53cbb
+  ord: 6
+  block: para
+  text: All submissions shall be validated before a case number is issued.
+  h: 17c53cbbfef6a1ec
+  start: 336
+  end: 402
+  section: 2. Validation
+- id: s-9152d9d9
+  ord: 7
+  block: para
+  text: Validation is synchronous for the web form and asynchronous for the partner API (see §4).
+  h: 9152d9d96419d013
+  start: 403
+  end: 493
+  section: 2. Validation
+- id: s-17c17a7a
+  ord: 8
+  block: li
+  text: The email address shall match RFC 5322 and shall have a resolvable MX record.
+  h: 17c17a7afb7b3a7a
+  start: 495
+  end: 574
+  section: 2. Validation
+  depth: 1
+- id: s-a3bc73e5
+  ord: 9
+  block: li
+  text: The ABN, when supplied, shall pass the ATO checksum. Invalid ABNs shall be rejected with error ABN_INVALID.
+  h: a3bc73e529c39baa
+  start: 575
+  end: 686
+  section: 2. Validation
+  depth: 1
+- id: s-d841e69d
+  ord: 10
+  block: li
+  text: 'Required fields are: applicant name, date of birth, email, and at least one contact number.'
+  h: d841e69dac225203
+  start: 687
+  end: 780
+  section: 2. Validation
+  depth: 1
+- id: s-75a3754d
+  ord: 11
+  block: li
+  text: Free-text fields shall be limited to 2,000 characters, e.g. the "circumstances" field.
+  h: 75a3754d315de83a
+  start: 781
+  end: 869
+  section: 2. Validation
+  depth: 1
+- id: s-1eb5b33c
+  ord: 12
+  block: para
+  text: Where the applicant is under 18, the system shall require a guardian's details.
+  h: 1eb5b33c2c2f0936
+  start: 871
+  end: 950
+  section: 2. Validation
+- id: s-c2705e1e
+  ord: 13
+  block: para
+  text: We expect this to be rare (approx. 2% of submissions).
+  h: c2705e1e065cfb57
+  start: 951
+  end: 1005
+  section: 2. Validation
+- id: s-b626646c
+  ord: 14
+  block: heading
+  text: 2.1 Defaulting logic
+  h: b626646c9d32be95
+  start: 1007
+  end: 1032
+  section: 2.1 Defaulting logic
+  depth: 3
+- id: s-641a49b2
+  ord: 15
+  block: para
+  text: When the preferred contact channel is omitted, the system shall default it to email.
+  h: 641a49b2673e178e
+  start: 1033
+  end: 1117
+  section: 2.1 Defaulting logic
+- id: s-47776cc5
+  ord: 16
+  block: para
+  text: When both a mobile and a landline are supplied and no preference is stated, the system shall prefer mobile.
+  h: 47776cc50ea33ced
+  start: 1118
+  end: 1225
+  section: 2.1 Defaulting logic
+- id: s-bc49a50b
+  ord: 17
+  block: heading
+  text: 3. Lockout
+  h: bc49a50b8878691d
+  start: 1227
+  end: 1241
+  section: 3. Lockout
+  depth: 2
+- id: s-e9000ece
+  ord: 18
+  block: para
+  text: While an applicant has failed identity verification 3 times within 24 hours, the system shall lock further attempts and shall notify the applicant through their verified channel.
+  h: e9000ecef025e530
+  start: 1242
+  end: 1420
+  section: 3. Lockout
+- id: s-89aaec68
+  ord: 19
+  block: para
+  text: Locked accounts unlock automatically after 24 hours; support staff may unlock earlier.
+  h: 89aaec6845aee658
+  start: 1421
+  end: 1507
+  section: 3. Lockout
+- id: s-7a0c1e67
+  ord: 20
+  block: row
+  text: Event | Response | Owner
+  h: 7a0c1e67c8471b1e
+  start: 1509
+  end: 1538
+  section: 3. Lockout
+- id: s-443463d6
+  ord: 21
+  block: row
+  text: 3rd failed verification | Lock for 24 h | Platform
+  h: 443463d69179fd1e
+  start: 1552
+  end: 1607
+  section: 3. Lockout
+- id: s-131bb5c5
+  ord: 22
+  block: row
+  text: Manual unlock | Audit entry written | Support
+  h: 131bb5c506212ea7
+  start: 1607
+  end: 1657
+  section: 3. Lockout
+- id: s-17760a90
+  ord: 23
+  block: heading
+  text: 4. Partner API
+  h: 17760a90123943a1
+  start: 1658
+  end: 1676
+  section: 4. Partner API
+  depth: 2
+- id: s-093b43c3
+  ord: 24
+  block: para
+  text: The partner API is documented separately.
+  h: 093b43c36ec03c39
+  start: 1677
+  end: 1718
+  section: 4. Partner API
+- id: s-70ee89db
+  ord: 25
+  block: para
+  text: 'Rate limits are per partner key: 100 requests/minute, burst 200.'
+  h: 70ee89dbb2a91f31
+  start: 1719
+  end: 1783
+  section: 4. Partner API
+- id: s-bc0299f2
+  ord: 26
+  block: para
+  text: When a partner exceeds the limit, the API shall return HTTP 429 with Retry-After.
+  h: bc0299f295e20799
+  start: 1784
+  end: 1867
+  section: 4. Partner API
+- id: s-a502baaa
+  ord: 27
+  block: code
+  text: |-
+    ```json
+    { "error": "RATE_LIMITED", "retryAfter": 30 }
+    ```
+  h: a502baaa12bc1ce5
+  start: 1869
+  end: 1926
+  section: 4. Partner API
+- id: s-1e90a3ee
+  ord: 28
+  block: para
+  text: Partners have asked whether limits could be raised for bulk migrations; this is under discussion.
+  h: 1e90a3ee56a77f61
+  start: 1928
+  end: 2025
+  section: 4. Partner API
+- id: s-e6672133
+  ord: 29
+  block: para
+  text: Is a per-partner override needed in v1?
+  h: e6672133906b4e28
+  start: 2026
+  end: 2065
+  section: 4. Partner API
+- id: s-95de1f1c
+  ord: 30
+  block: para
+  text: Unclear.
+  h: 95de1f1c7160562b
+  start: 2066
+  end: 2074
+  section: 4. Partner API
+- id: s-2d1a8c1c
+  ord: 31
+  block: heading
+  text: 5. Non-goals
+  h: 2d1a8c1c6a7ca058
+  start: 2076
+  end: 2092
+  section: 5. Non-goals
+  depth: 2
+- id: s-005d4329
+  ord: 32
+  block: para
+  text: This design does not cover payment processing or document upload.
+  h: 005d43299d93dd65
+  start: 2093
+  end: 2158
+  section: 5. Non-goals
+- id: s-4a21fa0e
+  ord: 33
+  block: para
+  text: Those are handled by the documents service and are out of scope here.
+  h: 4a21fa0eb25079df
+  start: 2159
+  end: 2228
+  section: 5. Non-goals

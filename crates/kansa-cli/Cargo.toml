@@ -1,0 +1,14 @@
+[package]
+name = "kansa-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kansa"
+path = "src/main.rs"
+
+[dependencies]
+kansa-core = { path = "../kansa-core" }
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }

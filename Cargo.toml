@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = ["crates/kansa-core", "crates/kansa-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/marlboro-red/kansa"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
+dirs = "6"
+fs2 = "0.4"
+pulldown-cmark = { version = "0.13", default-features = false }
+git2 = "0.20"
+tempfile = "3"
