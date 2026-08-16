@@ -467,3 +467,6 @@ table.inv-table input[type="checkbox"] { accent-color: var(--amber); }
 .prlist li { border: 1px solid var(--line); border-radius: var(--r); padding: 8px 12px; background: var(--panel); }
 .prlist .row1 { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .prlist .row2 { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.sp.added { box-shadow: inset 3px 0 0 var(--jade); padding-left: 6px; margin-left: -6px; }
+.addedlist { padding: 4px 4px 10px; }
+.addedlist .added { font-family: var(--serif); font-size: 13px; padding: 4px 8px; border-left: 3px solid var(--jade); margin-bottom: 4px; }

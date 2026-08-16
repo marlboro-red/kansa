@@ -91,7 +91,18 @@ pub fn doc_coverage(store: &Store, ctx: &Context, snap: &Snapshot) -> Result<Doc
             open_questions += 1;
         }
     }
-    let marks = store.marks(ctx, &snap.doc)?;
+    // Marks are per context; a PR context inherits the default branch's marks for spans that
+    // still exist (anchors are content-addressed, so this keeps PR views consistent).
+    let mut marks = store.marks(ctx, &snap.doc)?;
+    if let Context::Pr { .. } = ctx {
+        let base = Context::Branch {
+            branch: store.repo()?.default_branch,
+        };
+        let base_marks = store.marks(&base, &snap.doc)?;
+        for (k, v) in base_marks.spans {
+            marks.spans.entry(k).or_insert(v);
+        }
+    }
 
     let mut meter = Meter {
         open_questions,

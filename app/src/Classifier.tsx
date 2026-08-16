@@ -402,6 +402,7 @@ export const Classifier: Component<Props> = (p) => {
                   dimOthers={!!linkedReq()}
                   onPick={(i, shift) => { if (!pickSpan(i)) move(i, shift); }}
                   focus={focusSpan()}
+                  added={reviewing() ? new Set(view()?.pending?.added ?? []) : EMPTY}
                   onPickReq={(slug) => setLinkedReq(slug)}
                   tick={tick()}
                 />
@@ -432,6 +433,7 @@ export const Classifier: Component<Props> = (p) => {
           {(pend) => (
             <ReconcilePanel
               recon={pend()}
+              addedText={(id) => incoming()?.snapshot.spans.find((s) => s.id === id)?.text}
               readOnly={isPr()}
               picking={picking()}
               focus={focusSpan()}
@@ -505,6 +507,7 @@ export const Classifier: Component<Props> = (p) => {
 };
 
 const [tick, setTick] = createSignal(0);
+const EMPTY = new Set<string>();
 
 // ---------------------------------------------------------------------------
 // Document body: renders spans grouped into paragraphs / lists / tables / code.
@@ -545,6 +548,7 @@ const DocBody: Component<{
   linked: Set<string>;
   lens: Set<string> | null;
   focus: string | null;
+  added: Set<string>;
   dimOthers: boolean;
   onPick: (i: number, shift: boolean) => void;
   onPickReq: (slug: string) => void;
@@ -592,6 +596,7 @@ const DocBody: Component<{
           current: p.cursor === i,
           selected: i >= p.selRange[0] && i <= p.selRange[1] && p.selRange[0] !== p.selRange[1],
           linked: p.linked.has(r().span.id) || p.focus === r().span.id,
+          added: p.added.has(r().span.id),
           dim: (p.dimOthers && !p.linked.has(r().span.id)) || (!!p.lens && !p.lens.has(r().span.id) && !r().status.structural),
           pending: r().pending,
         }}

@@ -10,6 +10,8 @@ const ORDER: Record<VerdictKind, number> = { missing: 0, "meaning-changed": 1, r
  */
 export const ReconcilePanel: Component<{
   recon: Reconciliation;
+  /** id → text for `recon.added` (from the incoming snapshot). */
+  addedText: (id: string) => string | undefined;
   readOnly: boolean;
   picking: string | null;
   focus: string | null;
@@ -54,6 +56,14 @@ export const ReconcilePanel: Component<{
         <label class="small toggle"><input type="checkbox" checked={showUnchanged()} onChange={(e) => setShowUnchanged(e.currentTarget.checked)} /> show unchanged</label>
       </div>
       <div class="inv-list">
+        <Show when={p.recon.added.length}>
+          <div class="addedlist">
+            <div class="small muted" style={{ "margin-bottom": "4px" }}>New sentences (become residue)</div>
+            <For each={p.recon.added}>
+              {(id) => <div class="added" onMouseEnter={() => p.onFocus(id)} onMouseLeave={() => p.onFocus(null)}>{p.addedText(id) ?? id}</div>}
+            </For>
+          </div>
+        </Show>
         <For each={sorted()} fallback={<div class="inv-empty">Nothing changed for classified sentences.</div>}>
           {(v) => (
             <div class="verdict" classList={{ decided: !!v.decision && v.kind !== "unchanged", focus: p.focus === (v.to ?? v.from), picking: p.picking === v.from }} onMouseEnter={() => p.onFocus(v.to ?? null)} onMouseLeave={() => p.onFocus(null)}>
