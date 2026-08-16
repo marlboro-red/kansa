@@ -347,7 +347,7 @@ pub fn create_req(
     let base = new
         .slug
         .map(|s| s.to_string())
-        .unwrap_or_else(|| slugify(new.statement, 40));
+        .unwrap_or_else(|| slugify(new.statement, 32));
     let slug = ws.store.free_req_slug(&base)?;
     let id = Id::new("req", &slug, 1)?;
     let mut r = ReqRev::new(id, new.statement, by);
@@ -512,7 +512,7 @@ pub fn flag_question(
     let base = new
         .slug
         .map(|s| s.to_string())
-        .unwrap_or_else(|| slugify(new.quote, 40));
+        .unwrap_or_else(|| slugify(new.quote, 32));
     let mut slug = base.clone();
     let mut i = 1;
     while !ws.store.qst_revs(&slug)?.is_empty() {

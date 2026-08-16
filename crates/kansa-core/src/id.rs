@@ -125,24 +125,56 @@ impl<'de> Deserialize<'de> for Id {
     }
 }
 
-/// Turn free text into a slug candidate: lowercase, non-alnum → `-`, squeeze, trim, cap length.
+const STOPWORDS: &[&str] = &[
+    "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "by", "at", "as", "is",
+    "are", "be", "been", "shall", "should", "must", "will", "may", "can", "system", "tool", "it",
+    "its", "this", "that", "these", "those", "when", "while", "if", "then", "where", "which",
+    "who", "from", "into", "than", "not", "no", "any", "all", "each", "every", "per", "via", "so",
+    "such", "only", "also", "both", "either", "neither", "we", "user", "users",
+];
+
+/// Turn free text into a slug candidate: lowercase alnum words, stopwords dropped, whole words
+/// only, up to `max_len` characters. Falls back to the first words if everything was a stopword.
 pub fn slugify(text: &str, max_len: usize) -> String {
-    let mut out = String::new();
-    let mut last_dash = true;
-    for c in text.chars() {
-        let c = c.to_ascii_lowercase();
-        if c.is_ascii_lowercase() || c.is_ascii_digit() {
-            out.push(c);
-            last_dash = false;
-        } else if !last_dash {
-            out.push('-');
-            last_dash = true;
+    let words: Vec<String> = text
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_ascii_lowercase())
+        .collect();
+    let pick = |ws: &[String]| -> String {
+        let mut out = String::new();
+        for w in ws {
+            let need = if out.is_empty() {
+                w.len()
+            } else {
+                out.len() + 1 + w.len()
+            };
+            if need > max_len {
+                break;
+            }
+            if !out.is_empty() {
+                out.push('-');
+            }
+            out.push_str(w);
         }
-        if out.len() >= max_len {
-            break;
-        }
+        out
+    };
+    let meaningful: Vec<String> = words
+        .iter()
+        .filter(|w| !STOPWORDS.contains(&w.as_str()))
+        .cloned()
+        .collect();
+    let mut out = pick(&meaningful);
+    if out.is_empty() {
+        out = pick(&words);
     }
-    let out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        // a single overlong word: hard-cut it
+        out = words
+            .first()
+            .map(|w| w.chars().take(max_len).collect())
+            .unwrap_or_default();
+    }
     if out.is_empty() {
         "item".into()
     } else {
@@ -197,10 +229,25 @@ mod tests {
     fn slugify_basic() {
         assert_eq!(
             slugify("When a user fails login 5 times!", 40),
-            "when-a-user-fails-login-5-times"
+            "fails-login-5-times"
         );
         assert_eq!(slugify("  --Foo__Bar--  ", 40), "foo-bar");
         assert_eq!(slugify("!!!", 40), "item");
+        assert_eq!(
+            slugify("The system shall be the tool.", 40),
+            "the-system-shall-be-the-tool"
+        );
+        assert_eq!(
+            slugify(
+                "The tool shall read a requirements inventory and design docs, compute coverage",
+                32
+            ),
+            "read-requirements-inventory"
+        );
+        assert_eq!(
+            slugify("Supercalifragilisticexpialidocious", 10),
+            "supercalif"
+        );
         assert!(valid_slug(&slugify(
             "Some really long sentence about validation rules across forms",
             24
