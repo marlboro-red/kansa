@@ -113,7 +113,12 @@ enum Cmd {
 #[derive(Subcommand)]
 enum RepoCmd {
     /// Register a GitHub repo (clones it under the kansa home).
-    Add { github: String },
+    Add {
+        github: String,
+        /// Clone from this URL instead of github.com (e.g. file:///path — local testing).
+        #[arg(long)]
+        url: Option<String>,
+    },
     /// List registered repos.
     List,
     /// Fetch origin and snapshot changed tracked docs.
@@ -339,8 +344,11 @@ fn main() -> Result<()> {
     match cli.cmd {
         Cmd::Serve { port } => serve(port),
         Cmd::Repo { cmd } => match cmd {
-            RepoCmd::Add { github } => {
-                let ws = ops::register_repo(&github)?;
+            RepoCmd::Add { github, url } => {
+                let ws = match url {
+                    Some(u) => ops::register_repo_from_url(&kansa_core::store::kansa_home()?, &github, &u)?,
+                    None => ops::register_repo(&github)?,
+                };
                 let cfg = ws.store.repo()?;
                 out(json, &cfg, |c| {
                     format!(

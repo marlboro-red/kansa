@@ -243,7 +243,7 @@ export const InventoryView: Component<{
                                     <Show when={r.groups.length}><span class="narrow-only">{r.groups.join(", ")}</span></Show>
                                   </div>
                                 </td>
-                                <td class="c-status"><span class={`chip status-${r.status}`}>{r.status}</span></td>
+                                <td class="c-status"><span class={`chip status-${r.status}`}>{r.status}</span><Show when={r.suspect}><span class="chip suspect" title={r.suspect!}>suspect</span></Show></td>
                                 <td class="mono small c-docs" title={r.docs.join(", ")}>{r.docs.map((d) => d.split("/").pop()).join(", ")}</td>
                                 <td class="small c-groups" title={r.groups.join(", ")}>{r.groups.join(", ")}</td>
                                 <td class="qbadge c-q">{r.open_questions ? `?${r.open_questions}` : ""}</td>

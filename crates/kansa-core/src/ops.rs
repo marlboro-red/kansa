@@ -434,10 +434,19 @@ pub struct DocView {
 }
 
 pub fn doc_view(ws: &Workspace, ctx: &Context, doc: &str) -> Result<DocView> {
-    let snap = ws
-        .store
-        .current_snapshot(ctx, doc)?
-        .ok_or_else(|| anyhow!("{doc} has no snapshot in this context — track it first"))?;
+    doc_view_at(ws, ctx, doc, None)
+}
+
+/// Render a specific snapshot (e.g. the incoming one during reconciliation) with the
+/// context's classification projected onto it.
+pub fn doc_view_at(ws: &Workspace, ctx: &Context, doc: &str, sha: Option<&str>) -> Result<DocView> {
+    let snap = match sha {
+        Some(sha) => ws.store.load_snapshot(doc, sha)?,
+        None => ws
+            .store
+            .current_snapshot(ctx, doc)?
+            .ok_or_else(|| anyhow!("{doc} has no snapshot in this context — track it first"))?,
+    };
     // Source: prefer the exact blob by sha; fall back to the ref.
     let source = match ws.git.find_blob(git2::Oid::from_str(&snap.sha)?) {
         Ok(b) => String::from_utf8_lossy(b.content()).into_owned(),

@@ -103,6 +103,7 @@ export type DocView = {
   snapshot: { doc: string; sha: string; segmenter: number; spans: Span[] };
   coverage: { doc: string; snapshot: string; meter: Meter; spans: [string, SpanStatus][] };
   round: Round | null;
+  pending?: Reconciliation | null;
 };
 
 export type Status = "extracted" | "assumed" | "confirmed" | "disputed" | "retired";
@@ -117,6 +118,7 @@ export type Req = {
   rating?: [Level, Level] | null;
   owner?: string | null;
   reason?: string | null;
+  suspect?: string | null;
   anchors: { doc: string; span: string }[];
   questions: string[];
   history: { at: string; by: string; op: string; note?: string }[];
@@ -130,6 +132,9 @@ export type Question = {
   materiality: Level;
   readings: { key: string; text: string; default?: boolean }[];
   affects: string[];
+  answer?: { reading: string; note?: string | null; by: string; at: string } | null;
+  pending?: { reading: string; note?: string | null; by: string; at: string } | null;
+  history: { at: string; by: string; op: string; note?: string }[];
 };
 
 export type Group = {
@@ -149,6 +154,39 @@ export type GroupRollup = {
 };
 
 export type InventoryRow = Req & { groups: string[]; docs: string[]; open_questions: number };
+
+export type VerdictKind = "unchanged" | "reworded" | "meaning-changed" | "missing";
+export type Decision =
+  | { kind: "accept" }
+  | { kind: "meaning-changed" }
+  | { kind: "reanchor"; span: string }
+  | { kind: "drop" }
+  | { kind: "retire"; reason: string };
+export type Verdict = {
+  from: string;
+  from_text: string;
+  to?: string | null;
+  to_text?: string | null;
+  kind: VerdictKind;
+  similarity: number;
+  reqs: string[];
+  questions: string[];
+  non_normative: boolean;
+  decision?: Decision | null;
+};
+export type Reconciliation = { doc: string; from: string; to: string; verdicts: Verdict[]; added: string[] };
+
+export type PrSummary = {
+  number: number;
+  title: string;
+  head: string;
+  head_ref: string;
+  base_ref: string;
+  author: string;
+  updated_at: string;
+  draft: boolean;
+  touches: string[];
+};
 
 export type ExportResult = {
   inventory: string;
@@ -170,20 +208,21 @@ export const api = {
   untrackDoc: (github: string, path: string) => call<void>("untrack_doc", { github, path }),
   refreshRepo: (github: string) => call<DocChange[]>("refresh_repo", { github }),
   repoStatus: (github: string) => call<RepoStatus>("repo_status", { github }),
-  docView: (github: string, doc: string) => call<DocView>("doc_view", { github, doc }),
+  docView: (github: string, doc: string, context?: Context, sha?: string) => call<DocView>("doc_view", { github, doc, context, sha }),
   listReqs: (github: string) => call<Req[]>("list_reqs", { github }),
 
-  markNonNormative: (github: string, doc: string, spans: string[]) =>
-    call<void>("mark_non_normative", { github, doc, spans }),
-  unmark: (github: string, doc: string, spans: string[]) => call<void>("unmark", { github, doc, spans }),
+  markNonNormative: (github: string, doc: string, spans: string[], context?: Context) =>
+    call<void>("mark_non_normative", { github, doc, spans, context }),
+  unmark: (github: string, doc: string, spans: string[], context?: Context) => call<void>("unmark", { github, doc, spans, context }),
   createReq: (
     github: string,
     doc: string,
     spans: string[],
     req: { statement: string; slug?: string; pattern?: Pattern; rating?: [Level, Level]; owner?: string },
-  ) => call<Req>("create_req", { github, doc, spans, ...req }),
-  attachReq: (github: string, doc: string, spans: string[], slug: string) =>
-    call<Req>("attach_req", { github, doc, spans, slug }),
+    context?: Context,
+  ) => call<Req>("create_req", { github, doc, spans, ...req, context }),
+  attachReq: (github: string, doc: string, spans: string[], slug: string, context?: Context) =>
+    call<Req>("attach_req", { github, doc, spans, slug, context }),
   detachReq: (github: string, doc: string, spans: string[], slug: string) =>
     call<void>("detach_req", { github, doc, spans, slug }),
   updateReq: (
@@ -197,8 +236,21 @@ export const api = {
     doc: string,
     spans: string[],
     q: { quote: string; materiality?: Level; readings?: { key: string; text: string }[]; default?: string; affects?: string[] },
-  ) => call<Question>("flag_question", { github, doc, spans, ...q }),
-  closeRound: (github: string, doc: string) => call<Round>("close_round", { github, doc }),
+    context?: Context,
+  ) => call<Question>("flag_question", { github, doc, spans, ...q, context }),
+  closeRound: (github: string, doc: string, context?: Context) => call<Round>("close_round", { github, doc, context }),
+  decideVerdict: (github: string, doc: string, span: string, decision: Decision, context?: Context) =>
+    call<Reconciliation>("decide_verdict", { github, doc, span, decision, context }),
+  confirmReconciliation: (github: string, doc: string, context?: Context) =>
+    call<Reconciliation>("confirm_reconciliation", { github, doc, context }),
+  rounds: (github: string, doc: string, context?: Context) => call<Round[]>("rounds", { github, doc, context }),
+  listQuestions: (github: string) => call<Question[]>("list_questions", { github }),
+  answerQuestion: (github: string, slug: string, reading: string, note?: string) =>
+    call<Question>("answer_question", { github, slug, reading, note }),
+  resolveHeldAnswer: (github: string, slug: string, apply: boolean) => call<Question>("resolve_held_answer", { github, slug, apply }),
+  withdrawQuestion: (github: string, slug: string) => call<Question>("withdraw_question", { github, slug }),
+  listPrs: (github: string) => call<PrSummary[]>("list_prs", { github }),
+  openPr: (github: string, pr: number, doc: string) => call<Context>("open_pr", { github, pr, doc }),
   export: (github: string, out?: string) => call<ExportResult>("export", { github, out }),
 
   inventory: (github: string) => call<InventoryRow[]>("inventory", { github }),

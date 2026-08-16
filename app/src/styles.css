@@ -106,6 +106,7 @@ kbd {
 .chip.status-confirmed { color: var(--jade); border-color: var(--jade); background: var(--jade-soft); }
 .chip.status-disputed { color: var(--coral); border-color: var(--coral); background: var(--coral-soft); }
 .chip.status-retired { color: var(--ink-3); text-decoration: line-through; }
+.chip.suspect { color: var(--coral); border-color: var(--coral); background: var(--coral-soft); margin-left: 4px; }
 
 /* ---------- shell ---------- */
 .shell { display: grid; grid-template-columns: 264px 1fr; height: 100%; }
@@ -403,3 +404,36 @@ table.inv-table input[type="checkbox"] { accent-color: var(--amber); }
 .groupcard .bar .seg-disputed { background: var(--coral); }
 .groupcard .bar .seg-retired { background: var(--ink-3); }
 .groupcard .row3 { font-size: 11px; display: flex; flex-direction: column; gap: 2px; }
+
+/* ---------- reconciliation ---------- */
+.topbar .banner { background: var(--amber-soft); border-color: var(--amber); color: var(--amber); font-weight: 600; }
+.topbar .banner.pr { background: var(--violet-soft); border-color: var(--violet); color: var(--violet); }
+.chip.pr { color: var(--violet); border-color: var(--violet); }
+.recon-head { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.recon-head .row1 { display: flex; justify-content: space-between; align-items: baseline; }
+.recon-head .counts { display: flex; gap: 6px; flex-wrap: wrap; }
+.small { font-size: 11.5px; }
+.toggle { display: flex; gap: 6px; align-items: center; color: var(--ink-3); }
+.vk { font: 10.5px/1 var(--mono); padding: 3px 6px; border-radius: 4px; border: 1px solid var(--line); }
+.vk.unchanged { color: var(--ink-3); }
+.vk.reworded { color: var(--amber); border-color: var(--amber); }
+.vk.meaning-changed { color: var(--coral); border-color: var(--coral); }
+.vk.missing { color: var(--coral); border-color: var(--coral); background: var(--coral-soft); }
+.vk.added { color: var(--jade); border-color: var(--jade); }
+.verdict { padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r); margin-bottom: 6px; background: var(--paper); display: flex; flex-direction: column; gap: 5px; }
+.verdict.decided { border-color: var(--line-2); opacity: 0.85; }
+.verdict.focus { border-color: var(--jade); }
+.verdict.picking { border-color: var(--amber); box-shadow: 0 0 0 2px var(--amber-soft); }
+.verdict .row1 { display: flex; gap: 6px; align-items: center; }
+.verdict .from { font-family: var(--serif); font-size: 13px; color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--coral); }
+.verdict.decided .from, .verdict .from:hover { text-decoration: none; }
+.verdict .to { font-family: var(--serif); font-size: 13.5px; }
+.verdict .to.missing-to { color: var(--coral); font-style: italic; font-family: var(--sans); font-size: 12px; }
+.verdict .links { display: flex; gap: 4px; flex-wrap: wrap; }
+.verdict .links .qchip { color: var(--violet); }
+.verdict .actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.verdict .actions button { padding: 3px 8px; font-size: 11.5px; }
+.verdict .actions button.on { border-color: var(--amber); color: var(--amber); background: var(--amber-soft); }
+.verdict .retire { display: flex; gap: 6px; }
+.chip.decision { color: var(--amber); border-color: var(--amber); }
+.recon-foot { padding: 10px 12px; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }

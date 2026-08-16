@@ -17,6 +17,8 @@ import { ReqPalette } from "./ReqPalette";
 import { QuestionDialog } from "./QuestionDialog";
 import { Inventory } from "./Inventory";
 import { GroupPalette } from "./GroupPalette";
+import { ReconcilePanel } from "./ReconcilePanel";
+import type { Context, Decision } from "./api";
 
 export type Toast = { kind: "error" | "info"; text: string };
 
@@ -25,6 +27,8 @@ type Props = {
   doc: string;
   /** Land on this span (click-through from the inventory). */
   initialSpan?: string;
+  /** PR context; default branch when absent. */
+  context?: Context;
   onBack: () => void;
   toast: (t: Toast | null) => void;
 };
@@ -33,7 +37,19 @@ type Props = {
 export type SpanRow = { span: Span; status: SpanStatus; pending: boolean };
 
 export const Classifier: Component<Props> = (p) => {
-  const [view, { mutate }] = createResource(() => [p.github, p.doc] as const, ([g, d]) => api.docView(g, d));
+  const ctx = () => p.context;
+  const isPr = () => !!p.context && "pr" in p.context;
+  const [view, { mutate }] = createResource(() => [p.github, p.doc, JSON.stringify(p.context ?? null)] as const, ([g, d]) => api.docView(g, d, ctx()));
+  const reload = async () => mutate(await api.docView(p.github, p.doc, ctx()));
+  // Reconciliation review: render the incoming snapshot instead of the current one.
+  const [reviewing, setReviewing] = createSignal(false);
+  const [incoming, { refetch: refetchIncoming }] = createResource(
+    () => (reviewing() && view()?.pending ? [p.github, p.doc, view()!.pending!.to] as const : null),
+    ([g, d, sha]) => api.docView(g, d, ctx(), sha),
+  );
+  const [picking, setPicking] = createSignal<string | null>(null);
+  const [focusSpan, setFocusSpan] = createSignal<string | null>(null);
+  const active = () => (reviewing() ? incoming() : view());
   const [reqs, { refetch: refetchReqs }] = createResource(() => p.github, api.listReqs);
   const [groups, { refetch: refetchGroups }] = createResource(() => p.github, api.listGroups);
   const groupsByReq = createMemo(() => {
@@ -48,7 +64,7 @@ export const Classifier: Component<Props> = (p) => {
   const [patches, setPatches] = createStore<Record<string, SpanStatus>>({});
 
   const rows = createMemo<SpanRow[]>(() => {
-    const v = view();
+    const v = active();
     if (!v) return [];
     const statusById = new Map(v.coverage.spans);
     return v.snapshot.spans.map((span) => {
@@ -158,8 +174,8 @@ export const Classifier: Component<Props> = (p) => {
     setBusy(true);
     try {
       await call();
-      const fresh = await api.docView(p.github, p.doc);
-      mutate(fresh);
+      await reload();
+      if (reviewing()) refetchIncoming();
       refetchReqs();
     } catch (e) {
       p.toast({ kind: "error", text: String(e) });
@@ -171,7 +187,7 @@ export const Classifier: Component<Props> = (p) => {
 
   function markNonNormative() {
     const ids = selectedIds();
-    mutateSpans(ids, (s) => ({ ...s, state: "non-normative" }), () => api.markNonNormative(p.github, p.doc, ids)).then(() => afterClassify());
+    mutateSpans(ids, (s) => ({ ...s, state: "non-normative" }), () => api.markNonNormative(p.github, p.doc, ids, ctx())).then(() => afterClassify());
   }
   function clearClassification() {
     const rs = rows();
@@ -179,7 +195,7 @@ export const Classifier: Component<Props> = (p) => {
     const work: Promise<unknown>[] = [];
     for (const id of ids) {
       const st = rs.find((r) => r.span.id === id)!.status;
-      if (st.state === "non-normative") work.push(api.unmark(p.github, p.doc, [id]));
+      if (st.state === "non-normative") work.push(api.unmark(p.github, p.doc, [id], ctx()));
       for (const rid of st.reqs) work.push(api.detachReq(p.github, p.doc, [id], slugOf(rid)));
     }
     if (!work.length) return;
@@ -198,7 +214,7 @@ export const Classifier: Component<Props> = (p) => {
     await mutateSpans(
       ids,
       (s) => ({ ...s, state: "mapped", reqs: [...s.reqs, label] }),
-      () => (r.mode === "attach" ? api.attachReq(p.github, p.doc, ids, r.slug) : api.createReq(p.github, p.doc, ids, r)),
+      () => (r.mode === "attach" ? api.attachReq(p.github, p.doc, ids, r.slug, ctx()) : api.createReq(p.github, p.doc, ids, r, ctx())),
     );
     afterClassify();
   }
@@ -206,16 +222,16 @@ export const Classifier: Component<Props> = (p) => {
   async function raiseQuestion(q: { quote: string; materiality: Level; readings: { key: string; text: string }[]; default?: string }) {
     const ids = selectedIds();
     setDialog(null);
-    await mutateSpans(ids, (s) => ({ ...s, state: "question", questions: [...s.questions, "qst~…"] }), () => api.flagQuestion(p.github, p.doc, ids, q));
+    await mutateSpans(ids, (s) => ({ ...s, state: "question", questions: [...s.questions, "qst~…"] }), () => api.flagQuestion(p.github, p.doc, ids, q, ctx()));
     afterClassify();
   }
 
   async function closeRound() {
     setBusy(true);
     try {
-      const r = await api.closeRound(p.github, p.doc);
+      const r = await api.closeRound(p.github, p.doc, ctx());
       p.toast({ kind: "info", text: `Round #${r.n} closed.` });
-      mutate(await api.docView(p.github, p.doc));
+      await reload();
     } catch (e) {
       p.toast({ kind: "error", text: String(e) });
     } finally {
@@ -260,6 +276,33 @@ export const Classifier: Component<Props> = (p) => {
     } catch (e) { p.toast({ kind: "error", text: String(e) }); }
   }
 
+  // ---- reconciliation
+  async function decide(from: string, d: Decision) {
+    setBusy(true);
+    try {
+      await api.decideVerdict(p.github, p.doc, from, d, ctx());
+      await reload();
+    } catch (e) { p.toast({ kind: "error", text: String(e) }); } finally { setBusy(false); setPicking(null); }
+  }
+  async function confirmRecon() {
+    setBusy(true);
+    try {
+      const r = await api.confirmReconciliation(p.github, p.doc, ctx());
+      setReviewing(false);
+      await reload();
+      refetchReqs();
+      p.toast({ kind: "info", text: `Adopted ${r.to.slice(0, 7)} — round closed, ${r.added.length} new sentence(s) to classify.` });
+      landed = false;
+    } catch (e) { p.toast({ kind: "error", text: String(e) }); } finally { setBusy(false); }
+  }
+  function pickSpan(i: number) {
+    const from = picking();
+    if (!from) return false;
+    const id = rows()[i]?.span.id;
+    if (id) decide(from, { kind: "reanchor", span: id });
+    return true;
+  }
+
   // ---- keyboard
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null;
@@ -271,6 +314,11 @@ export const Classifier: Component<Props> = (p) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key;
     const ext = e.shiftKey;
+    if (reviewing() && "rcqxg".includes(k) && k.length === 1) {
+      e.preventDefault();
+      p.toast({ kind: "info", text: "Decide the changed sentences and confirm first — then classify the new text." });
+      return;
+    }
     switch (k) {
       case "u": case "U": e.preventDefault(); nextUnclassified(); break;
       case "n": case "j": case "ArrowDown": e.preventDefault(); move(cursor() + 1, ext); break;
@@ -287,7 +335,7 @@ export const Classifier: Component<Props> = (p) => {
       case "Home": e.preventDefault(); move(0); break;
       case "End": e.preventDefault(); move(rows().length - 1); break;
       case "?": e.preventDefault(); setDialog(dialog() === "help" ? null : "help"); break;
-      case "Escape": setAnchor(null); setLinkedReq(null); break;
+      case "Escape": setAnchor(null); setLinkedReq(null); setPicking(null); break;
     }
   }
   onMount(() => window.addEventListener("keydown", onKey));
@@ -295,6 +343,7 @@ export const Classifier: Component<Props> = (p) => {
 
   // On first load land on the first unclassified prose span.
   let landed = false;
+  createEffect(() => { reviewing(); landed = false; });
   createEffect(() => {
     if (!landed && view() && rows().length) {
       landed = true;
@@ -311,6 +360,7 @@ export const Classifier: Component<Props> = (p) => {
           <span>{p.github}</span>
           <span class="sep">/</span>
           <span class="doc">{p.doc}</span>
+          <Show when={isPr()}><span class="chip pr">PR #{(p.context as { pr: number }).pr}</span></Show>
         </div>
         <span class="spacer" />
         <Show when={(groups() ?? []).length}>
@@ -321,6 +371,15 @@ export const Classifier: Component<Props> = (p) => {
         </Show>
         <Show when={view()?.round} fallback={<span class="round">no open round</span>}>
           {(r) => <span class="round">round <b>#{r().n}</b> · {shortSha(r().snapshot)}</span>}
+        </Show>
+        <Show when={view()?.pending}>
+          {(pend) => (
+            <button class="banner" classList={{ pr: isPr() }} onClick={() => setReviewing(!reviewing())}>
+              {isPr() ? "▲ " : "⚠ "}
+              {isPr() ? `${pend().verdicts.filter((v) => v.kind !== "unchanged").length} changed · ${pend().added.length} new vs base` : `changed upstream · ${pend().verdicts.filter((v) => v.kind !== "unchanged" && !v.decision).length} to decide`}
+              {reviewing() ? " · reviewing" : " · review"}
+            </button>
+          )}
         </Show>
         <button onClick={doExport} disabled={busy()}>Export</button>
         <button class="primary" onClick={closeRound} disabled={busy() || !view()?.round || meter().residue > 0} title="Requires residue = 0">
@@ -341,7 +400,8 @@ export const Classifier: Component<Props> = (p) => {
                   linked={linkedSpanIds()}
                   lens={lensSpanIds()}
                   dimOthers={!!linkedReq()}
-                  onPick={(i, shift) => { move(i, shift); }}
+                  onPick={(i, shift) => { if (!pickSpan(i)) move(i, shift); }}
+                  focus={focusSpan()}
                   onPickReq={(slug) => setLinkedReq(slug)}
                   tick={tick()}
                 />
@@ -351,7 +411,7 @@ export const Classifier: Component<Props> = (p) => {
           <Rail rows={rows()} cursor={cursor()} onJump={(i) => move(i)} docEl={docEl} tick={tick()} />
         </div>
 
-        <Inventory
+        <Show when={reviewing() && view()?.pending} fallback={<Inventory
           doc={p.doc}
           reqs={reqs() ?? []}
           groupsByReq={groupsByReq()}
@@ -364,11 +424,26 @@ export const Classifier: Component<Props> = (p) => {
             if (i >= 0) { setCursor(i); setAnchor(null); scrollTo(i); }
           }}
           onJumpSpan={(id) => { const i = rows().findIndex((r) => r.span.id === id); if (i >= 0) move(i); }}
-          onChanged={async () => { refetchReqs(); refetchGroups(); mutate(await api.docView(p.github, p.doc)); }}
+          onChanged={async () => { refetchReqs(); refetchGroups(); await reload(); }}
           onGroup={(slug) => openGroupPalette([slug])}
           github={p.github}
           toast={p.toast}
-        />
+        />}>
+          {(pend) => (
+            <ReconcilePanel
+              recon={pend()}
+              readOnly={isPr()}
+              picking={picking()}
+              focus={focusSpan()}
+              busy={busy()}
+              onDecide={decide}
+              onPick={setPicking}
+              onFocus={setFocusSpan}
+              onConfirm={confirmRecon}
+              onExit={() => { setReviewing(false); setPicking(null); }}
+            />
+          )}
+        </Show>
       </div>
 
       <footer class="statusbar">
@@ -469,6 +544,7 @@ const DocBody: Component<{
   selRange: [number, number];
   linked: Set<string>;
   lens: Set<string> | null;
+  focus: string | null;
   dimOthers: boolean;
   onPick: (i: number, shift: boolean) => void;
   onPickReq: (slug: string) => void;
@@ -515,7 +591,7 @@ const DocBody: Component<{
           structural: r().status.structural,
           current: p.cursor === i,
           selected: i >= p.selRange[0] && i <= p.selRange[1] && p.selRange[0] !== p.selRange[1],
-          linked: p.linked.has(r().span.id),
+          linked: p.linked.has(r().span.id) || p.focus === r().span.id,
           dim: (p.dimOthers && !p.linked.has(r().span.id)) || (!!p.lens && !p.lens.has(r().span.id) && !r().status.structural),
           pending: r().pending,
         }}

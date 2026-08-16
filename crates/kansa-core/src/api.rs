@@ -96,7 +96,11 @@ pub fn call(name: &str, args: &Value) -> Result<Value> {
         "list_repos" => j(ops::list_registered()?),
         "register_repo" => {
             let github: String = arg(args, "github")?;
-            let ws = ops::register_repo(&github)?;
+            let url: Option<String> = arg_opt(args, "url")?;
+            let ws = match url {
+                Some(u) => ops::register_repo_from_url(&crate::store::kansa_home()?, &github, &u)?,
+                None => ops::register_repo(&github)?,
+            };
             let cfg = ws.store.repo()?;
             j(ops::RepoSummary {
                 store_dir: ws.store.root().to_string_lossy().into_owned(),
@@ -117,7 +121,8 @@ pub fn call(name: &str, args: &Value) -> Result<Value> {
         "doc_view" => {
             let w = ws(args)?;
             let c = ctx_of(&w, args)?;
-            j(ops::doc_view(&w, &c, &arg::<String>(args, "doc")?)?)
+            let sha: Option<String> = arg_opt(args, "sha")?;
+            j(ops::doc_view_at(&w, &c, &arg::<String>(args, "doc")?, sha.as_deref())?)
         }
         "mark_non_normative" => {
             let w = ws(args)?;

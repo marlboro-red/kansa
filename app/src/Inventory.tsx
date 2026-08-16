@@ -49,6 +49,7 @@ export const Inventory: Component<{
             >
               <div class="row1">
                 <span class="id">{r.id}</span>
+                <Show when={r.suspect}><span class="chip suspect" title={r.suspect!}>suspect</span></Show>
                 <span class={`chip status-${r.status}`}>{r.status}</span>
               </div>
               <div class="stmt">{r.statement}</div>

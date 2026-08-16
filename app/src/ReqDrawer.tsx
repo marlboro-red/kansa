@@ -89,6 +89,7 @@ export const ReqDrawer: Component<{
           </Show>
         </dd>
         <Show when={p.req.reason}><dt>reason</dt><dd>{p.req.reason}</dd></Show>
+        <Show when={p.req.suspect}><dt>suspect</dt><dd class="loud">{p.req.suspect} — edit the statement or set a status to clear.</dd></Show>
       </dl>
       <div class="actions">
         <For each={STATUSES.filter((s) => s !== p.req.status)}>
