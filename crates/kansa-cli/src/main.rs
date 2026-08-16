@@ -346,7 +346,9 @@ fn main() -> Result<()> {
         Cmd::Repo { cmd } => match cmd {
             RepoCmd::Add { github, url } => {
                 let ws = match url {
-                    Some(u) => ops::register_repo_from_url(&kansa_core::store::kansa_home()?, &github, &u)?,
+                    Some(u) => {
+                        ops::register_repo_from_url(&kansa_core::store::kansa_home()?, &github, &u)?
+                    }
                     None => ops::register_repo(&github)?,
                 };
                 let cfg = ws.store.repo()?;

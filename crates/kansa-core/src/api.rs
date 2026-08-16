@@ -122,7 +122,12 @@ pub fn call(name: &str, args: &Value) -> Result<Value> {
             let w = ws(args)?;
             let c = ctx_of(&w, args)?;
             let sha: Option<String> = arg_opt(args, "sha")?;
-            j(ops::doc_view_at(&w, &c, &arg::<String>(args, "doc")?, sha.as_deref())?)
+            j(ops::doc_view_at(
+                &w,
+                &c,
+                &arg::<String>(args, "doc")?,
+                sha.as_deref(),
+            )?)
         }
         "mark_non_normative" => {
             let w = ws(args)?;

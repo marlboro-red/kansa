@@ -2,12 +2,15 @@ import { createResource, createSignal, ErrorBoundary, For, Show, type Component 
 import { api, type RepoSummary } from "./api";
 import { Classifier, type Toast } from "./Classifier";
 import { InventoryView } from "./InventoryView";
+import { ReviewView } from "./ReviewView";
+import type { Context, PrSummary } from "./api";
 
 type Route =
   | { kind: "home" }
   | { kind: "repo"; github: string }
   | { kind: "inventory"; github: string }
-  | { kind: "doc"; github: string; doc: string; span?: string };
+  | { kind: "review"; github: string }
+  | { kind: "doc"; github: string; doc: string; span?: string; context?: Context };
 
 const App: Component = () => {
   const [repos, { refetch: refetchRepos }] = createResource(api.listRepos);
@@ -63,6 +66,9 @@ const App: Component = () => {
                       <button classList={{ active: route().kind === "inventory" }} onClick={() => setRoute({ kind: "inventory", github: r.github })}>
                         <span class="dot inv-dot" /><span>Inventory</span>
                       </button>
+                      <button classList={{ active: route().kind === "review" }} onClick={() => setRoute({ kind: "review", github: r.github })}>
+                        <span class="dot inv-dot" /><span>Review</span>
+                      </button>
                     </div>
                   </Show>
                 </>
@@ -93,6 +99,10 @@ const App: Component = () => {
               run={run}
               onChanged={refetchRepos}
               onOpenDoc={(d) => setRoute({ kind: "doc", github: gh(), doc: d })}
+              onOpenPr={async (pr, doc) => {
+                const ctx = await run(`opening PR #${pr}`, () => api.openPr(gh(), pr, doc));
+                if (ctx) setRoute({ kind: "doc", github: gh(), doc, context: ctx });
+              }}
             />
           )}
         </Show>
@@ -105,10 +115,20 @@ const App: Component = () => {
             />
           )}
         </Show>
+        <Show when={route().kind === "review" && currentGithub()}>
+          {(gh) => (
+            <ReviewView
+              github={gh()}
+              onOpenAnchor={(doc, span) => setRoute({ kind: "doc", github: gh(), doc, span })}
+              onOpenDoc={(doc) => setRoute({ kind: "doc", github: gh(), doc })}
+              toast={showToast}
+            />
+          )}
+        </Show>
         <Show when={route().kind === "doc" && route()} keyed>
           {(r) => r.kind === "doc" && (
             <ErrorBoundary fallback={(e) => <div class="empty"><h1>Something broke</h1><pre class="mono" style={{ "white-space": "pre-wrap" }}>{String(e?.stack ?? e)}</pre></div>}>
-              <Classifier github={r.github} doc={r.doc} initialSpan={r.span} onBack={() => setRoute({ kind: "repo", github: r.github })} toast={showToast} />
+              <Classifier github={r.github} doc={r.doc} initialSpan={r.span} context={r.context} onBack={() => setRoute({ kind: "repo", github: r.github })} toast={showToast} />
             </ErrorBoundary>
           )}
         </Show>
@@ -161,9 +181,13 @@ const RepoPane: Component<{
   run: <T>(label: string, f: () => Promise<T>) => Promise<T | undefined>;
   onChanged: () => void;
   onOpenDoc: (doc: string) => void;
+  onOpenPr: (pr: number, doc: string) => void;
 }> = (p) => {
   const [docs, { refetch: refetchDocs }] = createResource(() => p.github, api.listDocs);
   const [status, { refetch: refetchStatus }] = createResource(() => p.github, api.repoStatus);
+  const [prErr, setPrErr] = createSignal("");
+  const [prs, { refetch: refetchPrs }] = createResource(() => p.github, (g) => api.listPrs(g).catch((e) => { setPrErr(String(e)); return [] as PrSummary[]; }));
+  const [reconDocs, setReconDocs] = createSignal<string[]>([]);
 
   async function toggle(path: string, tracked: boolean) {
     await p.run<unknown>(tracked ? `untracking ${path}` : `snapshotting ${path}`, () =>
@@ -174,11 +198,21 @@ const RepoPane: Component<{
   }
   async function refresh() {
     const changes = await p.run(`fetching ${p.github}`, () => api.refreshRepo(p.github));
-    if (changes) { await Promise.all([refetchDocs(), refetchStatus()]); p.onChanged(); }
+    if (changes) {
+      await Promise.all([refetchDocs(), refetchStatus(), refetchPrs()]);
+      p.onChanged();
+      setReconDocs(changes.filter((c) => c.to && !c.advanced).map((c) => c.doc));
+    }
   }
 
   return (
     <div class="repo-pane">
+      <Show when={reconDocs().length}>
+        <div class="export-result bad" style={{ margin: "0 0 12px" }}>
+          <div>Changed upstream: <b>{reconDocs().join(", ")}</b> — open the doc to review the changes before classifying further.</div>
+          <button class="ghost" onClick={() => setReconDocs([])}>dismiss</button>
+        </div>
+      </Show>
       <header class="pane-head">
         <div>
           <h1>{p.github}</h1>
@@ -225,6 +259,33 @@ const RepoPane: Component<{
               <Show when={s().rollup.unexported_changes}> · <span class="loud">unexported changes</span></Show>
             </p>
           )}
+        </Show>
+      </section>
+
+      <section>
+        <h2>Open pull requests</h2>
+        <Show when={prs()} fallback={<p class="muted">loading…</p>}>
+          <Show when={(prs() ?? []).length} fallback={<p class="muted" style={{ "font-size": "12px" }}>{prErr() || "No open pull requests."}</p>}>
+            <ul class="prlist">
+              <For each={prs()}>
+                {(pr) => (
+                  <li>
+                    <div class="row1">
+                      <span class="mono muted">#{pr.number}</span>
+                      <b>{pr.title}</b>
+                      <Show when={pr.draft}><span class="chip">draft</span></Show>
+                      <span class="muted small">{pr.author} · {pr.head_ref} → {pr.base_ref}</span>
+                    </div>
+                    <div class="row2">
+                      <Show when={pr.touches.length} fallback={<span class="muted small">touches no tracked docs</span>}>
+                        <For each={pr.touches}>{(d) => <button onClick={() => p.onOpenPr(pr.number, d)}>Open <span class="mono">{d}</span> at PR head</button>}</For>
+                      </Show>
+                    </div>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
         </Show>
       </section>
 
