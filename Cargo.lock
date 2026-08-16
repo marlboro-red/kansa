@@ -462,6 +462,8 @@ dependencies = [
  "anyhow",
  "clap",
  "kansa-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

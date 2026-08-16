@@ -11,4 +11,6 @@ path = "src/main.rs"
 [dependencies]
 kansa-core = { path = "../kansa-core" }
 anyhow.workspace = true
-clap = { version = "4", features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
