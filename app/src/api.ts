@@ -104,6 +104,7 @@ export type DocView = {
   coverage: { doc: string; snapshot: string; meter: Meter; spans: [string, SpanStatus][] };
   round: Round | null;
   pending?: Reconciliation | null;
+  tracked: boolean;
 };
 
 export type Status = "extracted" | "assumed" | "confirmed" | "disputed" | "retired";
@@ -185,6 +186,7 @@ export type PrSummary = {
   author: string;
   updated_at: string;
   draft: boolean;
+  files: string[];
   touches: string[];
 };
 
@@ -265,6 +267,7 @@ export const api = {
   acceptAllProposals: (github: string, doc: string, context?: Context) => call<number>("accept_all_proposals", { github, doc, context }),
   clearProposals: (github: string, doc: string, context?: Context) => call<void>("clear_proposals", { github, doc, context }),
   openPr: (github: string, pr: number, doc: string) => call<Context>("open_pr", { github, pr, doc }),
+  prDocs: (github: string, pr: number) => call<DocEntry[]>("pr_docs", { github, pr }),
   export: (github: string, out?: string) => call<ExportResult>("export", { github, out }),
 
   inventory: (github: string) => call<InventoryRow[]>("inventory", { github }),

@@ -10,6 +10,7 @@ type Route =
   | { kind: "repo"; github: string }
   | { kind: "inventory"; github: string }
   | { kind: "review"; github: string }
+  | { kind: "pr"; github: string; pr: PrSummary }
   | { kind: "doc"; github: string; doc: string; span?: string; context?: Context };
 
 const App: Component = () => {
@@ -99,10 +100,7 @@ const App: Component = () => {
               run={run}
               onChanged={refetchRepos}
               onOpenDoc={(d) => setRoute({ kind: "doc", github: gh(), doc: d })}
-              onOpenPr={async (pr, doc) => {
-                const ctx = await run(`opening PR #${pr}`, () => api.openPr(gh(), pr, doc));
-                if (ctx) setRoute({ kind: "doc", github: gh(), doc, context: ctx });
-              }}
+              onOpenPr={(pr) => setRoute({ kind: "pr", github: gh(), pr })}
             />
           )}
         </Show>
@@ -122,6 +120,21 @@ const App: Component = () => {
               onOpenAnchor={(doc, span) => setRoute({ kind: "doc", github: gh(), doc, span })}
               onOpenDoc={(doc) => setRoute({ kind: "doc", github: gh(), doc })}
               toast={showToast}
+            />
+          )}
+        </Show>
+        <Show when={route().kind === "pr" && route()} keyed>
+          {(r) => r.kind === "pr" && (
+            <PrPane
+              github={r.github}
+              pr={r.pr}
+              run={run}
+              onBack={() => setRoute({ kind: "repo", github: r.github })}
+              onOpenDoc={async (doc) => {
+                const ctx = await run(`opening PR #${r.pr.number}`, () => api.openPr(r.github, r.pr.number, doc));
+                if (ctx) setRoute({ kind: "doc", github: r.github, doc, context: ctx });
+              }}
+              onChanged={refetchRepos}
             />
           )}
         </Show>
@@ -162,6 +175,57 @@ const DocNav: Component<{ repo: RepoSummary; current: string | null; onOpen: (do
   );
 };
 
+/** A pull request as a place to work: its markdown files, open any at the PR head, track/untrack. */
+const PrPane: Component<{
+  github: string;
+  pr: PrSummary;
+  run: <T>(label: string, f: () => Promise<T>) => Promise<T | undefined>;
+  onBack: () => void;
+  onOpenDoc: (doc: string) => void;
+  onChanged: () => void;
+}> = (p) => {
+  const [docs, { refetch }] = createResource(() => [p.github, p.pr.number] as const, ([g, n]) => api.prDocs(g, n));
+  const changed = () => new Set(p.pr.files);
+  async function toggle(path: string, tracked: boolean) {
+    await p.run<unknown>(tracked ? `untracking ${path}` : `tracking ${path}`, () => (tracked ? api.untrackDoc(p.github, path) : api.trackDoc(p.github, path)));
+    refetch();
+    p.onChanged();
+  }
+  const sorted = () => [...(docs() ?? [])].sort((a, b) => Number(changed().has(b.path)) - Number(changed().has(a.path)) || a.path.localeCompare(b.path));
+  return (
+    <div class="repo-pane">
+      <header class="pane-head">
+        <div>
+          <p class="muted" style={{ margin: "0 0 4px" }}><button class="ghost" onClick={p.onBack}>← {p.github}</button></p>
+          <h1><span class="mono muted">#{p.pr.number}</span> {p.pr.title}</h1>
+          <p class="muted">{p.pr.author} · {p.pr.head_ref} → {p.pr.base_ref} · updated {p.pr.updated_at.slice(0, 10)}{p.pr.draft ? " · draft" : ""}</p>
+        </div>
+      </header>
+      <section>
+        <h2>Markdown files at PR head</h2>
+        <p class="muted small">Files this PR changes are listed first. Open any file to read it at the PR head with the base classification projected onto it; track a file to classify it.</p>
+        <Show when={docs()} fallback={<p class="muted">loading…</p>}>
+          <ul class="prfiles">
+            <For each={sorted()} fallback={<li class="muted">No markdown files on this PR.</li>}>
+              {(d) => (
+                <li classList={{ changed: changed().has(d.path) }}>
+                  <span class="mono path">{d.path}</span>
+                  <Show when={changed().has(d.path)}><span class="chip pr">changed</span></Show>
+                  <span style={{ flex: 1 }} />
+                  <label class="small muted" style={{ display: "flex", gap: "6px", "align-items": "center" }}>
+                    <input type="checkbox" checked={d.tracked} onChange={() => toggle(d.path, d.tracked)} /> tracked
+                  </label>
+                  <button class="primary" onClick={() => p.onOpenDoc(d.path)}>Open at PR head</button>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
+      </section>
+    </div>
+  );
+};
+
 const RepoAdd: Component<{ disabled: boolean; onAdd: (gh: string) => void }> = (p) => {
   const [value, setValue] = createSignal("");
   return (
@@ -181,7 +245,7 @@ const RepoPane: Component<{
   run: <T>(label: string, f: () => Promise<T>) => Promise<T | undefined>;
   onChanged: () => void;
   onOpenDoc: (doc: string) => void;
-  onOpenPr: (pr: number, doc: string) => void;
+  onOpenPr: (pr: PrSummary) => void;
 }> = (p) => {
   const [docs, { refetch: refetchDocs }] = createResource(() => p.github, api.listDocs);
   const [status, { refetch: refetchStatus }] = createResource(() => p.github, api.repoStatus);
@@ -269,17 +333,14 @@ const RepoPane: Component<{
             <ul class="prlist">
               <For each={prs()}>
                 {(pr) => (
-                  <li>
+                  <li class="clickable" onClick={() => p.onOpenPr(pr)}>
                     <div class="row1">
                       <span class="mono muted">#{pr.number}</span>
                       <b>{pr.title}</b>
                       <Show when={pr.draft}><span class="chip">draft</span></Show>
                       <span class="muted small">{pr.author} · {pr.head_ref} → {pr.base_ref}</span>
-                    </div>
-                    <div class="row2">
-                      <Show when={pr.touches.length} fallback={<span class="muted small">touches no tracked docs</span>}>
-                        <For each={pr.touches}>{(d) => <button onClick={() => p.onOpenPr(pr.number, d)}>Open <span class="mono">{d}</span> at PR head</button>}</For>
-                      </Show>
+                      <span style={{ flex: 1 }} />
+                      <span class="muted small">{pr.files.length} markdown file{pr.files.length === 1 ? "" : "s"}{pr.touches.length ? ` · ${pr.touches.length} tracked` : ""}</span>
                     </div>
                   </li>
                 )}

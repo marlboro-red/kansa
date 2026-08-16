@@ -139,11 +139,38 @@ pub fn track_doc(ws: &Workspace, path: &str) -> Result<Snapshot> {
     let ctx = Context::Branch {
         branch: cfg.default_branch.clone(),
     };
-    let (content, _sha) = repo::read_blob(&ws.git, &repo::branch_ref(&cfg.default_branch), &path)?
-        .ok_or_else(|| anyhow!("{path} not found on {}", cfg.default_branch))?;
-    let snap = Snapshot::build(&path, &content);
-    ws.store.save_snapshot(&snap)?;
-    ws.store.set_current_sha(&ctx, &path, &snap.sha)?;
+    let on_default = repo::read_blob(&ws.git, &repo::branch_ref(&cfg.default_branch), &path)?;
+    let snap = match on_default {
+        Some((content, _)) => {
+            let snap = Snapshot::build(&path, &content);
+            ws.store.save_snapshot(&snap)?;
+            if ws.store.current_sha(&ctx, &path)?.is_none() {
+                ws.store.set_current_sha(&ctx, &path, &snap.sha)?;
+            }
+            snap
+        }
+        None => {
+            // Not on the default branch yet (e.g. a file added in a PR): track it anyway; the
+            // default-branch snapshot arrives on the next refresh after merge. Return a snapshot
+            // from any fetched PR head that has the file so callers get something to show.
+            let mut found = None;
+            for r in ws.git.references_glob("refs/pull/*/head")? {
+                let r = r?;
+                if let Some(name) = r.name() {
+                    if let Some((c, _)) = repo::read_blob(&ws.git, name, &path)? {
+                        found = Some(Snapshot::build(&path, &c));
+                        break;
+                    }
+                }
+            }
+            found.ok_or_else(|| {
+                anyhow!(
+                    "{path} not found on {} or any fetched PR",
+                    cfg.default_branch
+                )
+            })?
+        }
+    };
     if !cfg.tracked.iter().any(|t| t.path == path) {
         cfg.tracked.push(TrackedDoc { path: path.clone() });
         ws.store.save_repo(&cfg)?;
@@ -431,6 +458,7 @@ pub struct DocView {
     pub round: Option<Round>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<crate::reconcile::Reconciliation>,
+    pub tracked: bool,
 }
 
 pub fn doc_view(ws: &Workspace, ctx: &Context, doc: &str) -> Result<DocView> {
@@ -457,6 +485,7 @@ pub fn doc_view_at(ws: &Workspace, ctx: &Context, doc: &str, sha: Option<&str>) 
     let coverage = doc_coverage(&ws.store, ctx, &snap)?;
     let round = ws.store.open_round(ctx, doc)?;
     let pending = ws.store.pending(ctx, doc)?;
+    let tracked = ws.store.repo()?.tracked.iter().any(|t| t.path == doc);
     Ok(DocView {
         doc: doc.into(),
         context: ctx.clone(),
@@ -465,6 +494,7 @@ pub fn doc_view_at(ws: &Workspace, ctx: &Context, doc: &str, sha: Option<&str>) 
         coverage,
         round,
         pending,
+        tracked,
     })
 }
 
@@ -472,6 +502,9 @@ pub fn doc_view_at(ws: &Workspace, ctx: &Context, doc: &str, sha: Option<&str>) 
 
 /// Ensure an open round exists for (ctx, doc) — called on first mutation (`obj~round-open~1`).
 fn ensure_round(store: &Store, ctx: &Context, doc: &str) -> Result<Round> {
+    if !store.repo()?.tracked.iter().any(|t| t.path == doc) {
+        bail!("{doc} is not tracked — track it first to classify");
+    }
     if let Some(r) = store.open_round(ctx, doc)? {
         return Ok(r);
     }
@@ -953,7 +986,9 @@ pub struct PrSummary {
     pub author: String,
     pub updated_at: String,
     pub draft: bool,
-    /// Tracked docs this PR touches.
+    /// Markdown files this PR changes.
+    pub files: Vec<String>,
+    /// Which of those are tracked docs.
     pub touches: Vec<String>,
 }
 
@@ -967,8 +1002,13 @@ pub fn list_prs(ws: &Workspace) -> Result<Vec<PrSummary>> {
                 .files
                 .iter()
                 .filter_map(|f| f.get("path").and_then(|x| x.as_str()).map(String::from))
+                .filter(|f| {
+                    let l = f.to_ascii_lowercase();
+                    l.ends_with(".md") || l.ends_with(".markdown")
+                })
                 .collect();
             PrSummary {
+                files: files.clone(),
                 touches: cfg
                     .tracked
                     .iter()
@@ -993,14 +1033,25 @@ pub fn list_prs(ws: &Workspace) -> Result<Vec<PrSummary>> {
         .collect())
 }
 
+/// Markdown files at a PR head (from the fetched ref — works without `gh`), flagged tracked.
+pub fn pr_docs(ws: &Workspace, pr: u64) -> Result<Vec<DocEntry>> {
+    let cfg = ws.store.repo()?;
+    let _ = repo::fetch(&ws.git);
+    let all = repo::list_markdown(&ws.git, &repo::pr_ref(pr))?;
+    Ok(all
+        .into_iter()
+        .map(|p| DocEntry {
+            tracked: cfg.tracked.iter().any(|t| t.path == p),
+            path: p,
+        })
+        .collect())
+}
+
 /// Open a PR context for a doc: fetch, snapshot the doc at the PR head, and (if the PR text
 /// differs from the base snapshot) compute the verdict list against the base classification.
 /// Returns the context to use with `doc_view`.
 pub fn open_pr(ws: &Workspace, pr: u64, doc: &str) -> Result<Context> {
     let cfg = ws.store.repo()?;
-    if !cfg.tracked.iter().any(|t| t.path == doc) {
-        bail!("{doc} is not a tracked doc");
-    }
     let _ = repo::fetch(&ws.git);
     let head = repo::head_sha(&ws.git, &repo::pr_ref(pr))
         .with_context(|| format!("PR #{pr} head not fetched"))?;

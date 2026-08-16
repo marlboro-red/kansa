@@ -86,6 +86,7 @@ pub const COMMANDS: &[&str] = &[
     "withdraw_question",
     "list_prs",
     "open_pr",
+    "pr_docs",
     "rounds",
     "prefill_start",
     "prefill_status",
@@ -409,6 +410,10 @@ pub fn call(name: &str, args: &Value) -> Result<Value> {
             )?)
         }
         "list_prs" => j(ops::list_prs(&ws(args)?)?),
+        "pr_docs" => {
+            let w = ws(args)?;
+            j(ops::pr_docs(&w, arg::<u64>(args, "pr")?)?)
+        }
         "open_pr" => {
             let w = ws(args)?;
             j(ops::open_pr(

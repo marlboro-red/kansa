@@ -434,6 +434,11 @@ export const Classifier: Component<Props> = (p) => {
         <Show when={view()?.round} fallback={<span class="round">no open round</span>}>
           {(r) => <span class="round">round <b>#{r().n}</b> · {shortSha(r().snapshot)}</span>}
         </Show>
+        <Show when={view() && !view()!.tracked}>
+          <button class="banner" onClick={async () => { try { await api.trackDoc(p.github, p.doc); await reload(); p.toast({ kind: "info", text: `Tracking ${p.doc}.` }); } catch (e) { p.toast({ kind: "error", text: String(e) }); } }} title="This file is not a tracked HLD yet — track it to classify">
+            ○ not tracked · click to track
+          </button>
+        </Show>
         <Show when={view()?.pending}>
           {(pend) => (
             <button class="banner" classList={{ pr: isPr() }} onClick={() => setReviewing(!reviewing())}>

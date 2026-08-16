@@ -486,3 +486,9 @@ table.inv-table input[type="checkbox"] { accent-color: var(--amber); }
 .vk.kind-context { color: var(--ink-3); }
 .vk.kind-question { color: var(--violet); border-color: var(--violet); }
 .small-btn { padding: 2px 8px; font-size: 11.5px; }
+.prlist li.clickable { cursor: pointer; }
+.prlist li.clickable:hover { border-color: var(--line-2); }
+.prfiles { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.prfiles li { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); }
+.prfiles li.changed { border-color: var(--violet); }
+.prfiles .path { font-size: 12.5px; }
