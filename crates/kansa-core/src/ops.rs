@@ -1983,7 +1983,7 @@ pub fn prefill_status(ws: &Workspace, ctx: &Context, doc: &str) -> Result<Prefil
 }
 
 /// Stamp `accepted_by` on the newest history entry of an object the agent proposed.
-fn attribute(h: &mut Vec<History>, user: &str) {
+fn attribute(h: &mut [History], user: &str) {
     if let Some(last) = h.last_mut() {
         last.by = "agent".into();
         last.accepted_by = Some(user.into());
@@ -2073,7 +2073,7 @@ pub fn accept_proposal(
                     Some(g) => g,
                     None => create_group(ws, title, None, "agent")?,
                 };
-                assign_group(ws, &g.id.slug, &[r.id.slug.clone()], "agent")?;
+                assign_group(ws, &g.id.slug, std::slice::from_ref(&r.id.slug), "agent")?;
                 let _l = ws.store.lock()?;
                 let mut revs = ws.store.grp_revs(&g.id.slug)?;
                 if let Some(cur) = revs.last_mut() {

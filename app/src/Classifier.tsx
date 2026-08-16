@@ -18,6 +18,8 @@ import { QuestionDialog } from "./QuestionDialog";
 import { Inventory } from "./Inventory";
 import { GroupPalette } from "./GroupPalette";
 import { ReconcilePanel } from "./ReconcilePanel";
+import { ProposalsPanel } from "./ProposalsPanel";
+import type { Proposal } from "./api";
 import type { Context, Decision } from "./api";
 
 export type Toast = { kind: "error" | "info"; text: string };
@@ -48,6 +50,22 @@ export const Classifier: Component<Props> = (p) => {
     ([g, d, sha]) => api.docView(g, d, ctx(), sha),
   );
   const [picking, setPicking] = createSignal<string | null>(null);
+  // ---- agent pre-fill: proposals live beside the doc; polled while a job runs
+  const [prefill, { refetch: refetchPrefill }] = createResource(() => [p.github, p.doc, JSON.stringify(p.context ?? null)] as const, ([g, d]) => api.prefillStatus(g, d, ctx()));
+  const [showProposals, setShowProposals] = createSignal(false);
+  const openProposals = createMemo(() => (prefill()?.proposals ?? []).filter((x) => x.status === "proposed"));
+  const proposalBySpan = createMemo(() => {
+    const m = new Map<string, Proposal>();
+    for (const x of openProposals()) for (const sid of x.spans) m.set(sid, x);
+    return m;
+  });
+  createEffect(() => {
+    const j = prefill()?.job;
+    if (j?.state === "running") {
+      const t = window.setTimeout(() => refetchPrefill(), 1500);
+      onCleanup(() => window.clearTimeout(t));
+    }
+  });
   const [focusSpan, setFocusSpan] = createSignal<string | null>(null);
   const active = () => (reviewing() ? incoming() : view());
   const [reqs, { refetch: refetchReqs }] = createResource(() => p.github, api.listReqs);
@@ -276,6 +294,40 @@ export const Classifier: Component<Props> = (p) => {
     } catch (e) { p.toast({ kind: "error", text: String(e) }); }
   }
 
+  // ---- agent pre-fill
+  async function startPrefill() {
+    setBusy(true);
+    try {
+      await api.prefillStart(p.github, p.doc, ctx());
+      setShowProposals(true);
+      refetchPrefill();
+    } catch (e) { p.toast({ kind: "error", text: String(e) }); } finally { setBusy(false); }
+  }
+  async function acceptProposal(id: string) {
+    const x = openProposals().find((y) => y.id === id);
+    if (!x) return;
+    // optimistic: paint the spans in their proposed state
+    const state = x.proposed.kind === "req" ? "mapped" : x.proposed.kind === "context" ? "non-normative" : "question";
+    await mutateSpans(x.spans, (s) => ({ ...s, state: state as SpanState }), () => api.acceptProposal(p.github, p.doc, id, ctx()));
+    refetchPrefill();
+    refetchGroups();
+    if (x.spans.includes(current()?.span.id ?? "")) afterClassify();
+  }
+  async function rejectProposal(id: string) {
+    try { await api.rejectProposal(p.github, p.doc, id, ctx()); refetchPrefill(); } catch (e) { p.toast({ kind: "error", text: String(e) }); }
+  }
+  async function acceptAll() {
+    setBusy(true);
+    try {
+      const n = await api.acceptAllProposals(p.github, p.doc, ctx());
+      await reload(); refetchReqs(); refetchGroups(); refetchPrefill();
+      p.toast({ kind: "info", text: `Accepted ${n} proposal(s).` });
+    } catch (e) { p.toast({ kind: "error", text: String(e) }); } finally { setBusy(false); }
+  }
+  async function clearProposals() {
+    try { await api.clearProposals(p.github, p.doc, ctx()); refetchPrefill(); } catch (e) { p.toast({ kind: "error", text: String(e) }); }
+  }
+
   // ---- reconciliation
   async function decide(from: string, d: Decision) {
     setBusy(true);
@@ -328,7 +380,17 @@ export const Classifier: Component<Props> = (p) => {
       case "r": e.preventDefault(); setDialog("req"); break;
       case "c": e.preventDefault(); markNonNormative(); break;
       case "q": e.preventDefault(); setDialog("question"); break;
-      case "x": case "Backspace": e.preventDefault(); clearClassification(); break;
+      case "Enter": {
+        const pr = proposalBySpan().get(current()?.span.id ?? "");
+        if (pr) { e.preventDefault(); acceptProposal(pr.id); }
+        break;
+      }
+      case "x": case "Backspace": {
+        e.preventDefault();
+        const pr = proposalBySpan().get(current()?.span.id ?? "");
+        if (pr) rejectProposal(pr.id); else clearClassification();
+        break;
+      }
       case "e": e.preventDefault(); { const s = current()?.status.reqs[0]; if (s) setLinkedReq(slugOf(s)); } break;
       case "g": e.preventDefault(); openGroupPalette(); break;
       case "G": e.preventDefault(); move(rows().length - 1); break;
@@ -381,6 +443,18 @@ export const Classifier: Component<Props> = (p) => {
             </button>
           )}
         </Show>
+        <Show when={prefill()?.available && !isPr()}>
+          <Show
+            when={prefill()?.job?.state === "running"}
+            fallback={
+              <Show when={openProposals().length} fallback={<button class="agent" onClick={startPrefill} disabled={busy() || meter().residue === 0 || !!view()?.pending} title="Ask the agent to draft classifications for every unclassified sentence">✦ Pre-fill</button>}>
+                <button class="agent on" onClick={() => setShowProposals(!showProposals())}>✦ {openProposals().length} proposal{openProposals().length === 1 ? "" : "s"}</button>
+              </Show>
+            }
+          >
+            <button class="agent on" onClick={() => setShowProposals(true)}><span class="spinner" style={{ display: "inline-block", "vertical-align": "middle", "margin-right": "6px" }} />pre-filling {prefill()!.job!.done}/{prefill()!.job!.total}</button>
+          </Show>
+        </Show>
         <button onClick={doExport} disabled={busy()}>Export</button>
         <button class="primary" onClick={closeRound} disabled={busy() || !view()?.round || meter().residue > 0} title="Requires residue = 0">
           Close round
@@ -403,6 +477,7 @@ export const Classifier: Component<Props> = (p) => {
                   onPick={(i, shift) => { if (!pickSpan(i)) move(i, shift); }}
                   focus={focusSpan()}
                   added={reviewing() ? new Set(view()?.pending?.added ?? []) : EMPTY}
+                  proposals={reviewing() ? new Map() : proposalBySpan()}
                   onPickReq={(slug) => setLinkedReq(slug)}
                   tick={tick()}
                 />
@@ -412,7 +487,7 @@ export const Classifier: Component<Props> = (p) => {
           <Rail rows={rows()} cursor={cursor()} onJump={(i) => move(i)} docEl={docEl} tick={tick()} />
         </div>
 
-        <Show when={reviewing() && view()?.pending} fallback={<Inventory
+        <Show when={showProposals() && !reviewing()} fallback={<Show when={reviewing() && view()?.pending} fallback={<Inventory
           doc={p.doc}
           reqs={reqs() ?? []}
           groupsByReq={groupsByReq()}
@@ -445,6 +520,21 @@ export const Classifier: Component<Props> = (p) => {
               onExit={() => { setReviewing(false); setPicking(null); }}
             />
           )}
+        </Show>}>
+          <ProposalsPanel
+            job={prefill()?.job ?? null}
+            proposals={prefill()?.proposals ?? []}
+            currentSpan={current()?.span.id ?? null}
+            spanText={(id) => view()?.snapshot.spans.find((s) => s.id === id)?.text}
+            busy={busy()}
+            onAccept={acceptProposal}
+            onReject={rejectProposal}
+            onAcceptAll={acceptAll}
+            onClear={clearProposals}
+            onFocus={setFocusSpan}
+            onJump={(id) => { const i = rows().findIndex((r) => r.span.id === id); if (i >= 0) move(i); }}
+            onExit={() => setShowProposals(false)}
+          />
         </Show>
       </div>
 
@@ -549,6 +639,7 @@ const DocBody: Component<{
   lens: Set<string> | null;
   focus: string | null;
   added: Set<string>;
+  proposals: Map<string, Proposal>;
   dimOthers: boolean;
   onPick: (i: number, shift: boolean) => void;
   onPickReq: (slug: string) => void;
@@ -556,28 +647,29 @@ const DocBody: Component<{
 }> = (p) => {
   const groups = createMemo(() => groupBlocks(p.rows, p.view.source));
   let inner: HTMLDivElement | undefined;
-  const [marks, setMarks] = createSignal<{ top: number; height: number; row: SpanRow }[]>([]);
+  const [marks, setMarks] = createSignal<{ top: number; height: number; row: SpanRow; prop?: Proposal }[]>([]);
 
   // Measure margin-mark positions after render / scroll / resize.
   function measure() {
     if (!inner) return;
     const base = inner.getBoundingClientRect().top;
-    const out: { top: number; height: number; row: SpanRow }[] = [];
+    const out: { top: number; height: number; row: SpanRow; prop?: Proposal }[] = [];
     let lastTop = -1e9;
     for (const r of p.rows) {
-      if (r.status.state === "unclassified") continue;
+      const prop = r.status.state === "unclassified" ? p.proposals.get(r.span.id) : undefined;
+      if (r.status.state === "unclassified" && !prop) continue;
       const el = inner.querySelector<HTMLElement>(`[data-sid="${CSS.escape(r.span.id)}"]`);
       if (!el) continue;
       const rect = el.getBoundingClientRect();
       const top = rect.top - base;
       // Merge marks that would overlap the previous one (same line): stack below.
       const adj = top < lastTop + 16 ? lastTop + 16 : top;
-      out.push({ top: adj, height: rect.height, row: r });
+      out.push({ top: adj, height: rect.height, row: r, prop });
       lastTop = adj;
     }
     setMarks(out);
   }
-  createEffect(() => { p.rows; p.tick; groups(); requestAnimationFrame(measure); });
+  createEffect(() => { p.rows; p.tick; p.proposals; groups(); requestAnimationFrame(measure); });
   onMount(() => {
     const ro = new ResizeObserver(() => measure());
     if (inner) ro.observe(inner);
@@ -597,6 +689,7 @@ const DocBody: Component<{
           selected: i >= p.selRange[0] && i <= p.selRange[1] && p.selRange[0] !== p.selRange[1],
           linked: p.linked.has(r().span.id) || p.focus === r().span.id,
           added: p.added.has(r().span.id),
+          proposed: p.proposals.has(r().span.id) && r().status.state === "unclassified",
           dim: (p.dimOthers && !p.linked.has(r().span.id)) || (!!p.lens && !p.lens.has(r().span.id) && !r().status.structural),
           pending: r().pending,
         }}
@@ -614,8 +707,9 @@ const DocBody: Component<{
       <div class="margin">
         <For each={marks()}>
           {(m) => (
-            <div class={`mark state-${m.row.status.state}`} classList={{ pending: m.row.pending }} style={{ top: `${m.top}px` }}>
+            <div class={`mark state-${m.row.status.state}`} classList={{ pending: m.row.pending, proposed: !!m.prop }} style={{ top: `${m.top}px` }}>
               <div class="ids">
+                <Show when={m.prop}>{(pr) => <span class="id prop" title={pr().proposed.kind === "req" && "statement" in pr().proposed ? (pr().proposed as { statement: string }).statement : pr().proposed.kind}>✦ {pr().proposed.kind === "req" ? ((pr().proposed as { slug?: string | null }).slug ?? "requirement") : pr().proposed.kind}</span>}</Show>
                 <For each={m.row.status.reqs}>
                   {(id) => <span class="id" onClick={() => p.onPickReq(slugOf(id))} title={id}>{id.replace(/^req~/, "").replace(/~\d+$/, "")}</span>}
                 </For>
