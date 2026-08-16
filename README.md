@@ -16,7 +16,7 @@ app/                Tauri 2 + SolidJS desktop app (thin)
 
 | Milestone | State |
 |---|---|
-| UM0 core + shells | done — store, segmenter, snapshots, reqtrace export, CLI, Tauri shell, CI (mac/win/linux) |
+| UM0 core + shells | done — store, segmenter, snapshots, reqtrace export, CLI, Tauri shell |
 | UM1 manual classifier | done — serif doc pane, margin marks, residue rail, `u/n/p/r/c/q/x/g` loop, palette, question dialog |
 | UM2 inventory + groups | done — repo-wide table, filters, group-by, bulk status/retire, groups + `g` quick-assign + lens, export w/ validate |
 | UM3 reconciliation, PRs, questions | done — verdicts (unchanged/reworded/missing), decisions, confirm/adopt + round supersede, PR view at head, review view (question queue, round timeline) |
