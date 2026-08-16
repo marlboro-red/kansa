@@ -2348,3 +2348,115 @@ print(json.dumps(out))
         std::env::remove_var("KANSA_AGENT_CMD");
     }
 }
+
+// ---------- cached GitHub data (stale-while-revalidate) ----------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Cached<T> {
+    pub data: T,
+    #[serde(with = "time::serde::rfc3339")]
+    pub fetched_at: time::OffsetDateTime,
+    /// True when a background refresh was started by this call; poll again shortly.
+    #[serde(default)]
+    pub refreshing: bool,
+}
+
+fn cache_path(store: &Store, key: &str) -> PathBuf {
+    store.root().join("cache").join(format!("{key}.yaml"))
+}
+
+fn cache_read<T: serde::de::DeserializeOwned>(store: &Store, key: &str) -> Option<Cached<T>> {
+    let p = cache_path(store, key);
+    if !p.exists() {
+        return None;
+    }
+    store.read_yaml(&p).ok()
+}
+
+fn cache_write<T: Serialize>(store: &Store, key: &str, data: &T) -> Result<()> {
+    store.write_yaml(
+        &cache_path(store, key),
+        &Cached {
+            data,
+            fetched_at: now(),
+            refreshing: false,
+        },
+    )
+}
+
+/// Serve `key` from the disk cache immediately (if present) and refresh in the background;
+/// otherwise fetch synchronously. `max_age` controls whether a background refresh is kicked.
+fn swr<T>(
+    ws: &Workspace,
+    key: &str,
+    max_age: time::Duration,
+    force: bool,
+    fetch: impl Fn(&Workspace) -> Result<T> + Send + 'static,
+) -> Result<Cached<T>>
+where
+    T: Serialize + serde::de::DeserializeOwned + Clone + Send + 'static,
+{
+    if !force {
+        if let Some(mut c) = cache_read::<T>(&ws.store, key) {
+            let stale = now() - c.fetched_at > max_age;
+            if stale && refresh_guard(key) {
+                let store = ws.store.clone();
+                let key = key.to_string();
+                std::thread::spawn(move || {
+                    if let Ok(w) = Workspace::open(store.root()) {
+                        if let Ok(fresh) = fetch(&w) {
+                            let _ = cache_write(&store, &key, &fresh);
+                        }
+                    }
+                    refresh_done(&key);
+                });
+                c.refreshing = true;
+            } else if stale {
+                c.refreshing = true; // someone else is already refreshing
+            }
+            return Ok(c);
+        }
+    }
+    let data = fetch(ws)?;
+    cache_write(&ws.store, key, &data)?;
+    Ok(Cached {
+        data,
+        fetched_at: now(),
+        refreshing: false,
+    })
+}
+
+/// One in-flight refresh per cache key per process.
+fn refresh_guard(key: &str) -> bool {
+    let set = REFRESHING.get_or_init(Default::default);
+    let mut g = set.lock().unwrap();
+    if g.contains(key) {
+        false
+    } else {
+        g.insert(key.to_string());
+        true
+    }
+}
+fn refresh_done(key: &str) {
+    if let Some(set) = REFRESHING.get() {
+        set.lock().unwrap().remove(key);
+    }
+}
+static REFRESHING: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::OnceLock::new();
+
+/// Open PRs, cached; background refresh when older than 60 s (`force` = fetch now).
+pub fn list_prs_cached(ws: &Workspace, force: bool) -> Result<Cached<Vec<PrSummary>>> {
+    swr(ws, "prs", time::Duration::seconds(60), force, list_prs)
+}
+
+/// Changed markdown files of a PR, cached per PR; background refresh when older than 60 s.
+pub fn pr_docs_cached(ws: &Workspace, pr: u64, force: bool) -> Result<Cached<Vec<PrDoc>>> {
+    swr(
+        ws,
+        &format!("pr-{pr}-docs"),
+        time::Duration::seconds(60),
+        force,
+        move |w| pr_docs(w, pr),
+    )
+}

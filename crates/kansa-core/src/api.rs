@@ -409,10 +409,14 @@ pub fn call(name: &str, args: &Value) -> Result<Value> {
                 &by(args),
             )?)
         }
-        "list_prs" => j(ops::list_prs(&ws(args)?)?),
+        "list_prs" => {
+            let force = arg_opt::<bool>(args, "force")?.unwrap_or(false);
+            j(ops::list_prs_cached(&ws(args)?, force)?)
+        }
         "pr_docs" => {
             let w = ws(args)?;
-            j(ops::pr_docs(&w, arg::<u64>(args, "pr")?)?)
+            let force = arg_opt::<bool>(args, "force")?.unwrap_or(false);
+            j(ops::pr_docs_cached(&w, arg::<u64>(args, "pr")?, force)?)
         }
         "open_pr" => {
             let w = ws(args)?;

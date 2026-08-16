@@ -4,6 +4,7 @@ import { Classifier, type Toast } from "./Classifier";
 import { InventoryView } from "./InventoryView";
 import { ReviewView } from "./ReviewView";
 import type { Context, PrSummary } from "./api";
+import { ago, createSwr } from "./swr";
 
 type Route =
   | { kind: "home" }
@@ -184,12 +185,14 @@ const PrPane: Component<{
   onOpenDoc: (doc: string) => void;
   onChanged: () => void;
 }> = (p) => {
-  const [docs, { refetch }] = createResource(() => [p.github, p.pr.number] as const, ([g, n]) => api.prDocs(g, n));
+  const [docsC, { refresh, refetch }] = createSwr(() => `prdocs:${p.github}:${p.pr.number}`, (force) => api.prDocs(p.github, p.pr.number, force));
+  const docs = () => docsC()?.data;
   async function toggle(path: string, tracked: boolean) {
     await p.run<unknown>(tracked ? `untracking ${path}` : `tracking ${path}`, () => (tracked ? api.untrackDoc(p.github, path) : api.trackDoc(p.github, path)));
-    refetch();
+    refresh();
     p.onChanged();
   }
+  void refetch;
   const sorted = () => [...(docs() ?? [])].sort((a, b) => Number(b.tracked) - Number(a.tracked) || a.path.localeCompare(b.path));
   return (
     <div class="repo-pane">
@@ -201,7 +204,7 @@ const PrPane: Component<{
         </div>
       </header>
       <section>
-        <h2>Markdown files changed in this PR</h2>
+        <h2>Markdown files changed in this PR <Show when={docsC()}>{(c) => <span class="muted freshness">· {c().refreshing ? "refreshing…" : `updated ${ago(c().fetched_at)}`}</span>}</Show></h2>
         <p class="muted small">Open a file to read it at the PR head with the base classification projected onto it; track a file to classify it.</p>
         <Show when={docs()} fallback={<p class="muted">loading…</p>}>
           <ul class="prfiles">
@@ -251,7 +254,8 @@ const RepoPane: Component<{
   const [docs, { refetch: refetchDocs }] = createResource(() => p.github, api.listDocs);
   const [status, { refetch: refetchStatus }] = createResource(() => p.github, api.repoStatus);
   const [prErr, setPrErr] = createSignal("");
-  const [prs, { refetch: refetchPrs }] = createResource(() => p.github, (g) => api.listPrs(g).catch((e) => { setPrErr(String(e)); return [] as PrSummary[]; }));
+  const [prsC, { refresh: refreshPrs }] = createSwr(() => `prs:${p.github}`, (force) => api.listPrs(p.github, force).catch((e) => { setPrErr(String(e)); return { data: [] as PrSummary[], fetched_at: new Date().toISOString(), refreshing: false }; }));
+  const prs = () => prsC()?.data;
   const [reconDocs, setReconDocs] = createSignal<string[]>([]);
   const [pick, setPick] = createSignal("");
   const [pickOpen, setPickOpen] = createSignal(false);
@@ -281,7 +285,7 @@ const RepoPane: Component<{
   async function refresh() {
     const changes = await p.run(`fetching ${p.github}`, () => api.refreshRepo(p.github));
     if (changes) {
-      await Promise.all([refetchDocs(), refetchStatus(), refetchPrs()]);
+      await Promise.all([refetchDocs(), refetchStatus(), refreshPrs()]);
       p.onChanged();
       setReconDocs(changes.filter((c) => c.to && !c.advanced).map((c) => c.doc));
     }
@@ -357,7 +361,10 @@ const RepoPane: Component<{
       </section>
 
       <section>
-        <h2>Open pull requests <span class="muted" style={{ "text-transform": "none", "letter-spacing": 0 }}>{prs() ? `${prsFiltered().length}/${prs()!.length}` : ""}</span></h2>
+        <h2>
+          Open pull requests <span class="muted" style={{ "text-transform": "none", "letter-spacing": 0 }}>{prs() ? `${prsFiltered().length}/${prs()!.length}` : ""}</span>
+          <Show when={prsC()}>{(c) => <span class="muted freshness">· {c().refreshing ? "refreshing…" : `updated ${ago(c().fetched_at)}`}</span>}</Show>
+        </h2>
         <Show when={(prs() ?? []).length}>
           <div class="prfilters">
             <input placeholder="Search PRs — number, title, author, branch, file…" value={prQuery()} onInput={(e) => setPrQuery(e.currentTarget.value)} />

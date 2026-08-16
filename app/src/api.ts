@@ -198,6 +198,8 @@ export type Proposal = { id: string; spans: string[]; proposed: Proposed; status
 export type PrefillJob = { state: "idle" | "running" | "done" | "error"; doc: string; snapshot: string; done: number; total: number; error?: string | null; model?: string | null; started: string; finished?: string | null };
 export type PrefillStatus = { available: boolean; job: PrefillJob | null; proposals: Proposal[] };
 
+export type Cached<T> = { data: T; fetched_at: string; refreshing: boolean };
+
 export type PrDoc = { path: string; status: "added" | "modified" | "deleted" | "renamed"; tracked: boolean };
 
 export type ExportResult = {
@@ -261,7 +263,7 @@ export const api = {
     call<Question>("answer_question", { github, slug, reading, note }),
   resolveHeldAnswer: (github: string, slug: string, apply: boolean) => call<Question>("resolve_held_answer", { github, slug, apply }),
   withdrawQuestion: (github: string, slug: string) => call<Question>("withdraw_question", { github, slug }),
-  listPrs: (github: string) => call<PrSummary[]>("list_prs", { github }),
+  listPrs: (github: string, force = false) => call<Cached<PrSummary[]>>("list_prs", { github, force }),
   prefillStart: (github: string, doc: string, context?: Context) => call<PrefillJob>("prefill_start", { github, doc, context }),
   prefillStatus: (github: string, doc: string, context?: Context) => call<PrefillStatus>("prefill_status", { github, doc, context }),
   acceptProposal: (github: string, doc: string, id: string, context?: Context) => call<Proposal>("accept_proposal", { github, doc, id, context }),
@@ -269,7 +271,7 @@ export const api = {
   acceptAllProposals: (github: string, doc: string, context?: Context) => call<number>("accept_all_proposals", { github, doc, context }),
   clearProposals: (github: string, doc: string, context?: Context) => call<void>("clear_proposals", { github, doc, context }),
   openPr: (github: string, pr: number, doc: string) => call<Context>("open_pr", { github, pr, doc }),
-  prDocs: (github: string, pr: number) => call<PrDoc[]>("pr_docs", { github, pr }),
+  prDocs: (github: string, pr: number, force = false) => call<Cached<PrDoc[]>>("pr_docs", { github, pr, force }),
   export: (github: string, out?: string) => call<ExportResult>("export", { github, out }),
 
   inventory: (github: string) => call<InventoryRow[]>("inventory", { github }),
