@@ -19,6 +19,7 @@ import { Inventory } from "./Inventory";
 import { GroupPalette } from "./GroupPalette";
 import { ReconcilePanel } from "./ReconcilePanel";
 import { ProposalsPanel } from "./ProposalsPanel";
+import { ByteSource, codeHtml, inlineHtml, stripBlockPrefix, tableCells } from "./md";
 import type { Proposal } from "./api";
 import type { Context, Decision } from "./api";
 
@@ -651,6 +652,15 @@ const DocBody: Component<{
   tick: number;
 }> = (p) => {
   const groups = createMemo(() => groupBlocks(p.rows, p.view.source));
+  const bytes = createMemo(() => new ByteSource(p.view.source));
+  const srcOf = (sp: Span) => bytes().slice(sp.start, sp.end);
+  /** Inline HTML for a prose/list/heading span: its own markdown slice, formatting kept. */
+  const inline = (sp: Span) => {
+    const src = bytes().sliceInline(sp.start, sp.end);
+    // Fall back to plain text if the slice doesn't look like this span (defensive).
+    if (!src.trim()) return inlineHtml(sp.text);
+    return inlineHtml(stripBlockPrefix(src).replace(/\s*\n\s*/g, " "));
+  };
   let inner: HTMLDivElement | undefined;
   const [marks, setMarks] = createSignal<{ top: number; height: number; row: SpanRow; prop?: Proposal }[]>([]);
 
@@ -701,11 +711,22 @@ const DocBody: Component<{
         data-sid={r().span.id}
         onMouseDown={(e) => { e.preventDefault(); p.onPick(i, e.shiftKey); }}
         title={r().span.id}
+        innerHTML={r().span.block === "code" || r().span.block === "html" || r().span.block === "row" ? undefined : inline(r().span)}
       >
-        {r().span.text}
+        {r().span.block === "row" ? rowCells(i) : r().span.block === "code" ? codeBlock(i) : r().span.block === "html" ? r().span.text : undefined}
       </span>
     );
   };
+  const rowCells = (i: number) => {
+    const cells = tableCells(srcOf(p.rows[i].span));
+    return <For each={cells}>{(c) => <span class="cell" innerHTML={inlineHtml(c)} />}</For>;
+  };
+  const codeBlock = (i: number) => {
+    const { lang, html } = codeHtml(srcOf(p.rows[i].span));
+    return <code class={lang ? `hljs language-${lang}` : "hljs"} innerHTML={html} />;
+  };
+  // Column alignment/widths: table rows render as a CSS grid with N equal-ish columns.
+  const tableCols = (items: number[]) => Math.max(1, ...items.map((i) => tableCells(srcOf(p.rows[i].span)).length));
 
   return (
     <div class="docinner" ref={inner}>
@@ -741,9 +762,9 @@ const DocBody: Component<{
               );
             case "table":
               return (
-                <table class="md"><tbody>
-                  <For each={g.items}>{(i) => <tr><td>{spanEl(i, true)}</td></tr>}</For>
-                </tbody></table>
+                <div class="md-table" style={{ "--cols": tableCols(g.items) }}>
+                  <For each={g.items}>{(i, k) => <div class="trow" classList={{ head: k() === 0 }}>{spanEl(i, true)}</div>}</For>
+                </div>
               );
             case "code":
               return <pre class="md">{spanEl(g.item, true)}</pre>;
