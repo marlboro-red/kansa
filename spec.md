@@ -13,16 +13,22 @@ Requirement IDs use the `<type>~<slug>~<rev>` grammar (reqtrace's `inv~id-gramma
 Everything below is owned by `kansa-core` and lives in the state store — a local directory **outside** the registered repo (e.g. `~/.kansa/repos/<owner>__<name>/`), so kansa never writes into the PM's repo. Promoting the store into the repo is a possible later change; nothing here depends on its location.
 
 ```
-<store>/
-  repo.yaml                 # remote, default branch, tracked docs
-  snapshots/<doc-key>/<sha>.yaml   # segmented doc snapshots (immutable)
-  reqs/<slug>.yaml          # all revs of one requirement slug
+<store>/                              # <config-dir>/kansa/repos/<owner>__<name>/
+  repo.yaml                           # remote, default branch, tracked docs
+  snapshots/<doc-key>/<sha>.yaml      # segmented doc snapshots (immutable)
+  current/<ctx>/<doc-key>             # sha of the current snapshot per context (branch or pr-N)
+  reqs/<slug>.yaml                    # all revs of one requirement slug
   questions/<slug>.yaml
   groups/<slug>.yaml
-  rounds/<doc-key>/<n>.yaml
-  exports/last.yaml         # what was last exported (for "unexported changes")
-  .lock                     # per-operation lock
+  rounds/<ctx>/<doc-key>/<n>.yaml
+  marks/<ctx>/<doc-key>.yaml          # non-normative marks (mapped/question states derive from anchors)
+  pending/<ctx>/<doc-key>.yaml        # reconciliation awaiting confirmation
+  proposals/<ctx>/<doc-key>.yaml      # agent proposals (proposed/accepted/rejected)
+  jobs/<ctx>/<doc-key>.yaml           # background job status (pre-fill)
+  exports/last.yaml                   # what was last exported (for "unexported changes")
+  .lock                               # per-operation lock
 ```
+The bare git clone lives beside it under `<config-dir>/kansa/clones/<owner>__<name>/`; kansa never checks it out.
 
 - `obj~store-atomic~1` — Every mutation shall be a single atomic write (write-temp + rename) under the store lock, and shall append a history entry `{at, by, accepted-by?, op, from?, to?}` to the object it changes.
 - `obj~store-shape~1` — All objects shall be YAML files, one per slug, holding every rev of that slug (newest last); the highest rev is *current*, matching reqtrace's `inv~current-rev~1`.
@@ -42,6 +48,7 @@ spans:
 
 - `obj~span-id~1` — A span's `id` shall be derived from a content hash of its normalized text plus a disambiguator for repeated identical sentences (`h` + occurrence index), never from position alone; `ord` is display order only.
 - `obj~span-blocks~1` — The segmenter shall treat list items, table rows, headings, and fenced code blocks as single spans (`block` records the kind); only prose paragraphs are sentence-split.
+- `obj~span-structural~1` — Headings, code blocks and HTML blocks are *structural*: they are addressable and may be mapped, but they do not count toward the coverage denominator unless the user classifies them (`u` skips them).
 - `obj~anchor~1` — An anchor is `{doc, span: <span-id>}` and resolves through the doc's *current* snapshot; when a fetch produces a new snapshot, reconciliation (§4.4) maps every anchor from the old snapshot to the new one and records the verdict; anchors are never rewritten silently.
 - `obj~snapshot-current~1` — Each tracked doc shall have exactly one *current* snapshot per context (default branch, or a PR head when classifying a PR); the classifier always renders the current snapshot.
 
@@ -63,6 +70,7 @@ Follows reqtrace's item schema so export is a projection, not a translation. req
 ```
 
 - `obj~req-revs~1` — Bumping a rev shall keep the prior rev in the file (status frozen as it was); export emits all revs so reqtrace's `stale` check works downstream.
+- `obj~req-suspect~1` — When reconciliation confirms a `meaning-changed` verdict, the affected requirement's current rev gets `suspect: <reason>` (surfaced as a badge and in oversight); the next human edit of statement or status clears it.
 - `obj~req-groups-derived~1` — A requirement's group membership is *not* stored on the requirement; it is derived from `grp.members` at read time (single source of truth, §4.3).
 
 ### 0.3 `qst~` — question
@@ -104,6 +112,10 @@ summary: {created: [...], changed: [...], retired: [...], verdicts: {...}}   # f
 - `obj~round-close~1` — A round shall close only by explicit user action, and only when residue = 0 and every reconciliation verdict for that snapshot is confirmed; closing writes the summary and freezes the round file.
 - `obj~round-supersede~1` — If a new snapshot arrives while a round is open, the open round stays open against the old snapshot until reconciliation is confirmed, then closes and a new round opens against the new snapshot.
 
+### 0.5 Reconciliation verdicts
+
+When a fetch (or PR) yields a new snapshot of a classified doc, core maps every classified old span onto the new snapshot and stores a **pending reconciliation**: `unchanged` (same content hash — auto-accepted), `reworded` (best fuzzy match ≥ 0.55 similarity, same block kind — human decides *same meaning* or *meaning changed*), `missing` (no match — human must re-anchor, drop, or retire-with-reason), plus the list of `added` new spans (they become residue). Confirming applies the decisions in one pass: anchors and marks are remapped, `meaning-changed` sets `suspect`, the open round is closed with verdict counts, and the current pointer advances (`obj~round-supersede~1`). Until then the classifier keeps rendering the old snapshot and refuses to close the round.
+
 ---
 
 ## 1. Stack decision: Tauri 2
@@ -134,7 +146,7 @@ HLDs live as markdown in GitHub repos. The app registers repos, not loose files.
 
 - `ui~repo-register~1` — The user shall register a GitHub repo (owner/name, authenticated through `gh`); the app shall clone/fetch it locally and keep kansa state for that repo in a local state store keyed by the repo, never written into the repo itself.
 - `ui~repo-docs~1` — For a registered repo the app shall list its markdown docs on the default branch and let the user pick which are HLDs (tracked docs); untracked docs are ignored by classification and oversight.
-- `ui~pr-view~1` — The app shall list open PRs on a registered repo and open a PR's version of a tracked doc: rendered markdown with spans, side-by-side or inline diff against the base branch, and the reconciliation verdicts (§4.4) computed against the base classification. Classifying against a PR head is allowed; the round is tagged with the PR number and head SHA.
+- `ui~pr-view~1` — The app shall list open PRs (via `gh pr list`) on a registered repo and open a PR's version of a tracked doc: the PR text rendered with the base classification projected onto it (anchors are content-addressed, so unchanged sentences keep their state), new sentences highlighted, and a read-only verdict list against the base snapshot. Classifying new sentences against a PR head is allowed (the round is tagged with PR number and head SHA); verdicts are not confirmable in a PR context — that happens on the default branch after merge.
 - `ui~repo-refresh~1` — Fetching is explicit (button / `R`), never on a timer; a fetch that changes a tracked doc opens the reconciliation flow.
 
 ## 4. The views
@@ -193,6 +205,7 @@ members: [req~email-format~1, req~abn-checksum~2, req~required-fields~1]
 - Reconciliation review: after an HLD edit, the verdict list (unchanged / reworded / meaning-changed / new / missing) presented for human confirmation *before* the round closes; `missing` items block closure until retired-with-reason or re-anchored.
 
 - `ui~agent-prefill~1` — On opening an unclassified/changed doc, the app shall offer (not auto-run) an agent pre-fill pass; proposals shall land in a visually distinct "proposed" state requiring per-item or per-group accept (`enter`) / reject (`x`), and accepted items shall record `by: agent, accepted-by: <user>` in history.
+- `ui~agent-backend~1` — The agent backend is the Claude Code CLI (`claude -p`, model overridable with `KANSA_AGENT_MODEL`); `KANSA_AGENT_CMD` substitutes any command that reads the prompt on stdin and prints the JSON array (used by tests and for other providers). Pre-fill runs on a background thread in batches of 40 sentences; progress and proposals are files in the store so the CLI and app see the same job.
 
 ## 5. Milestones
 
@@ -210,6 +223,7 @@ Deferred: PM-facing read-only mode, multi-user, in-app HLD editing (never — `t
 
 - `ui~platforms~1` — The app and CLI shall run on macOS, Windows, and Linux from one codebase; CI shall build and run core tests on all three from UM0.
 - `ui~windows-paths~1` — Store paths, doc keys, and anchors shall be platform-neutral: forward-slash doc paths as stored in git, store root under the OS config dir (`dirs`), no case-sensitivity assumptions in slugs/doc keys, and atomic rename done with a Windows-safe strategy (retry on sharing violation).
+- `ui~dev-bridge~1` — `kansa serve` exposes the app's command surface (`kansa_core::api::call`) over local HTTP so the frontend runs in an ordinary browser for development and automated UI testing; the Tauri app and the bridge dispatch through the same table (`ui~core-parity~1`).
 - `ui~gh-primary~1` — The GitHub CLI (`gh`) is the primary path for everything that talks to GitHub: auth (`gh auth setup-git`), repo metadata (`gh repo view`), PR listing (`gh pr list`), and fetches via the `git` it fronts. Local reads (blobs, trees) use libgit2 and never touch the network. If `gh` is absent, clone/fetch fall back to libgit2 with `$GITHUB_TOKEN`; PR features require `gh` and say so.
 
 ## 6. Risks specific to the app
