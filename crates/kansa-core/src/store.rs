@@ -10,6 +10,7 @@
 //!   groups/<slug>.yaml
 //!   rounds/<ctx-key>/<doc-key>/<n>.yaml
 //!   marks/<ctx-key>/<doc-key>.yaml
+//!   pending/<ctx-key>/<doc-key>.yaml   # reconciliation awaiting confirmation
 //!   exports/last.yaml
 //!   .lock
 //! ```
@@ -374,6 +375,32 @@ impl Store {
             .rounds(ctx, doc)?
             .into_iter()
             .find(|r| r.closed.is_none()))
+    }
+
+    // ----- pending reconciliation -----
+
+    fn pending_path(&self, ctx: &Context, doc: &str) -> PathBuf {
+        self.root
+            .join("pending")
+            .join(ctx.key())
+            .join(format!("{}.yaml", doc_key(doc)))
+    }
+    pub fn pending(
+        &self,
+        ctx: &Context,
+        doc: &str,
+    ) -> Result<Option<crate::reconcile::Reconciliation>> {
+        self.read_yaml_opt(&self.pending_path(ctx, doc))
+    }
+    pub fn save_pending(&self, ctx: &Context, r: &crate::reconcile::Reconciliation) -> Result<()> {
+        self.write_yaml(&self.pending_path(ctx, &r.doc), r)
+    }
+    pub fn clear_pending(&self, ctx: &Context, doc: &str) -> Result<()> {
+        let p = self.pending_path(ctx, doc);
+        if p.exists() {
+            fs::remove_file(p)?;
+        }
+        Ok(())
     }
 
     // ----- exports -----

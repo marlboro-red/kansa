@@ -38,7 +38,7 @@ impl Workspace {
         })
     }
 
-    fn refname(&self, ctx: &Context) -> String {
+    pub fn refname(&self, ctx: &Context) -> String {
         match ctx {
             Context::Branch { branch } => repo::branch_ref(branch),
             Context::Pr { pr, .. } => repo::pr_ref(*pr),
@@ -168,8 +168,8 @@ pub struct DocChange {
 }
 
 /// Fetch origin; for each tracked doc build a snapshot of the new blob if it changed
-/// (`ui~repo-refresh~1`). Pointers advance only when nothing is classified yet; otherwise the
-/// change is reported for reconciliation (UM3).
+/// (`ui~repo-refresh~1`). Pointers advance only when nothing is classified yet; otherwise a
+/// reconciliation is computed and stored as pending (`obj~anchor~1`).
 pub fn refresh(ws: &Workspace) -> Result<Vec<DocChange>> {
     repo::fetch(&ws.git)?;
     let _l = ws.store.lock()?;
@@ -179,10 +179,15 @@ pub fn refresh(ws: &Workspace) -> Result<Vec<DocChange>> {
     let ctx = Context::Branch {
         branch: cfg.default_branch.clone(),
     };
-    let refname = repo::branch_ref(&cfg.default_branch);
+    detect_changes(ws, &ctx, &cfg)
+}
+
+/// Compare each tracked doc at the context's ref against its current snapshot.
+fn detect_changes(ws: &Workspace, ctx: &Context, cfg: &RepoConfig) -> Result<Vec<DocChange>> {
+    let refname = ws.refname(ctx);
     let mut changes = vec![];
     for t in &cfg.tracked {
-        let cur = ws.store.current_sha(&ctx, &t.path)?;
+        let cur = ws.store.current_sha(ctx, &t.path)?;
         match repo::read_blob(&ws.git, &refname, &t.path)? {
             None => {
                 if cur.is_some() {
@@ -198,23 +203,221 @@ pub fn refresh(ws: &Workspace) -> Result<Vec<DocChange>> {
                 if cur.as_deref() == Some(sha.as_str()) {
                     continue;
                 }
+                if let Some(p) = ws.store.pending(ctx, &t.path)? {
+                    if p.to == sha {
+                        continue; // already pending against this exact blob
+                    }
+                }
                 let snap = Snapshot::build(&t.path, &content);
                 ws.store.save_snapshot(&snap)?;
-                let untouched = ws.store.open_round(&ctx, &t.path)?.is_none()
-                    && ws.store.rounds(&ctx, &t.path)?.is_empty();
-                if untouched || cur.is_none() {
-                    ws.store.set_current_sha(&ctx, &t.path, &snap.sha)?;
+                let advanced = match &cur {
+                    None => true,
+                    Some(cur_sha) => {
+                        let old = ws.store.load_snapshot(&t.path, cur_sha)?;
+                        let cov = doc_coverage(&ws.store, ctx, &old)?;
+                        let classified = cov.meter.classified > 0;
+                        if classified {
+                            let recon = build_reconciliation(ws, ctx, &old, &snap, &cov)?;
+                            ws.store.save_pending(ctx, &recon)?;
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                };
+                if advanced {
+                    ws.store.set_current_sha(ctx, &t.path, &snap.sha)?;
                 }
                 changes.push(DocChange {
                     doc: t.path.clone(),
                     from: cur,
                     to: Some(snap.sha),
-                    advanced: untouched,
+                    advanced,
                 });
             }
         }
     }
     Ok(changes)
+}
+
+fn build_reconciliation(
+    ws: &Workspace,
+    ctx: &Context,
+    old: &Snapshot,
+    new: &Snapshot,
+    cov: &DocCoverage,
+) -> Result<crate::reconcile::Reconciliation> {
+    let marks = ws.store.marks(ctx, &old.doc)?;
+    let by_id: std::collections::HashMap<&str, &crate::coverage::SpanStatus> =
+        cov.spans.iter().map(|(id, st)| (id.as_str(), st)).collect();
+    Ok(crate::reconcile::reconcile(&old.doc, old, new, |id| {
+        let st = by_id.get(id)?;
+        let nn = marks.spans.contains_key(id);
+        if st.reqs.is_empty() && st.questions.is_empty() && !nn {
+            return None;
+        }
+        Some((st.reqs.clone(), st.questions.clone(), nn))
+    }))
+}
+
+/// Record the human decision on one verdict.
+pub fn decide_verdict(
+    ws: &Workspace,
+    ctx: &Context,
+    doc: &str,
+    from_span: &str,
+    decision: crate::reconcile::Decision,
+) -> Result<crate::reconcile::Reconciliation> {
+    use crate::reconcile::{Decision, VerdictKind};
+    let _l = ws.store.lock()?;
+    let mut r = ws
+        .store
+        .pending(ctx, doc)?
+        .ok_or_else(|| anyhow!("no pending reconciliation for {doc}"))?;
+    let new = ws.store.load_snapshot(doc, &r.to)?;
+    let v = r
+        .verdicts
+        .iter_mut()
+        .find(|v| v.from == from_span)
+        .ok_or_else(|| anyhow!("no verdict for span {from_span}"))?;
+    match &decision {
+        Decision::Accept | Decision::MeaningChanged if v.to.is_none() => {
+            bail!("cannot accept a missing span — re-anchor, drop, or retire")
+        }
+        Decision::Reanchor { span } => {
+            let sp = new
+                .span(span)
+                .ok_or_else(|| anyhow!("span {span} not in new snapshot"))?;
+            v.to = Some(sp.id.clone());
+            v.to_text = Some(sp.text.clone());
+            v.similarity = crate::reconcile::similarity(&v.from_text, &sp.text);
+            if v.kind == VerdictKind::Missing {
+                v.kind = VerdictKind::Reworded;
+            }
+        }
+        Decision::MeaningChanged => v.kind = VerdictKind::MeaningChanged,
+        Decision::Retire { reason } if reason.trim().is_empty() => {
+            bail!("retiring requires a reason")
+        }
+        _ => {}
+    }
+    v.decision = Some(decision);
+    ws.store.save_pending(ctx, &r)?;
+    Ok(r)
+}
+
+/// Apply all decisions: remap anchors, close the old round, advance the pointer
+/// (`obj~round-supersede~1`). Fails if any verdict is still undecided.
+pub fn confirm_reconciliation(
+    ws: &Workspace,
+    ctx: &Context,
+    doc: &str,
+    by: &str,
+) -> Result<crate::reconcile::Reconciliation> {
+    use crate::reconcile::Decision;
+    let _l = ws.store.lock()?;
+    let r = ws
+        .store
+        .pending(ctx, doc)?
+        .ok_or_else(|| anyhow!("no pending reconciliation for {doc}"))?;
+    if r.unconfirmed() > 0 {
+        bail!("{} verdict(s) still need a decision", r.unconfirmed());
+    }
+    let mut marks_new = Marks::default();
+    let old_marks = ws.store.marks(ctx, doc)?;
+    for v in &r.verdicts {
+        let decision = v.decision.clone().unwrap_or(Decision::Accept);
+        let target: Option<String> = match &decision {
+            Decision::Accept | Decision::MeaningChanged => v.to.clone(),
+            Decision::Reanchor { span } => Some(span.clone()),
+            Decision::Drop | Decision::Retire { .. } => None,
+        };
+        // marks
+        if let (Some(m), Some(t)) = (old_marks.spans.get(&v.from), &target) {
+            marks_new.spans.insert(t.clone(), m.clone());
+        }
+        // requirements
+        for rid in &v.reqs {
+            let id: Id = rid.parse()?;
+            let mut revs = ws.store.req_revs(&id.slug)?;
+            let Some(cur) = revs.last_mut() else { continue };
+            let before = cur.anchors.clone();
+            cur.anchors.retain(|a| !(a.doc == doc && a.span == v.from));
+            if let Some(t) = &target {
+                let a = Anchor {
+                    doc: doc.into(),
+                    span: t.clone(),
+                };
+                if !cur.anchors.contains(&a) {
+                    cur.anchors.push(a);
+                }
+            }
+            match &decision {
+                Decision::MeaningChanged => {
+                    cur.suspect = Some(format!(
+                        "source changed meaning in {} — review statement",
+                        &r.to[..8.min(r.to.len())]
+                    ));
+                    cur.history.push(
+                        History::new(by, "meaning-changed")
+                            .change(Some(&before), Some(&cur.anchors))
+                            .note(v.to_text.clone().unwrap_or_default()),
+                    );
+                }
+                Decision::Retire { reason } => {
+                    cur.status = Status::Retired;
+                    cur.reason = Some(reason.clone());
+                    cur.history.push(History::new(by, "retire").note(format!(
+                        "source missing after {}: {reason}",
+                        &r.to[..8.min(r.to.len())]
+                    )));
+                }
+                _ => cur
+                    .history
+                    .push(History::new(by, "reconcile").change(Some(&before), Some(&cur.anchors))),
+            }
+            ws.store.save_req_revs(&id.slug, &revs)?;
+        }
+        // questions
+        for qid in &v.questions {
+            let id: Id = qid.parse()?;
+            let mut revs = ws.store.qst_revs(&id.slug)?;
+            let Some(cur) = revs.last_mut() else { continue };
+            cur.anchors.retain(|a| !(a.doc == doc && a.span == v.from));
+            if let Some(t) = &target {
+                cur.anchors.push(Anchor {
+                    doc: doc.into(),
+                    span: t.clone(),
+                });
+            }
+            cur.history.push(History::new(by, "reconcile"));
+            ws.store.save_qst_revs(&id.slug, &revs)?;
+        }
+    }
+    ws.store.save_marks(ctx, doc, &marks_new)?;
+    // close the old round (superseded), advance, clear pending
+    if let Some(mut round) = ws.store.open_round(ctx, doc)? {
+        let mut summary = round.summary.clone().unwrap_or_default();
+        let counts = r.counts();
+        summary.verdicts = Some(serde_yaml::to_value(
+            counts
+                .iter()
+                .map(|(k, v)| (format!("{k:?}").to_lowercase(), *v))
+                .collect::<std::collections::BTreeMap<_, _>>(),
+        )?);
+        summary.retired = r
+            .verdicts
+            .iter()
+            .filter(|v| matches!(v.decision, Some(Decision::Retire { .. })))
+            .flat_map(|v| v.reqs.iter().filter_map(|x| x.parse().ok()))
+            .collect();
+        round.summary = Some(summary);
+        round.closed = Some(now());
+        ws.store.save_round(&round)?;
+    }
+    ws.store.set_current_sha(ctx, doc, &r.to)?;
+    ws.store.clear_pending(ctx, doc)?;
+    Ok(r)
 }
 
 /// Everything the classifier needs to render a doc.
@@ -226,6 +429,8 @@ pub struct DocView {
     pub snapshot: Snapshot,
     pub coverage: DocCoverage,
     pub round: Option<Round>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<crate::reconcile::Reconciliation>,
 }
 
 pub fn doc_view(ws: &Workspace, ctx: &Context, doc: &str) -> Result<DocView> {
@@ -242,6 +447,7 @@ pub fn doc_view(ws: &Workspace, ctx: &Context, doc: &str) -> Result<DocView> {
     };
     let coverage = doc_coverage(&ws.store, ctx, &snap)?;
     let round = ws.store.open_round(ctx, doc)?;
+    let pending = ws.store.pending(ctx, doc)?;
     Ok(DocView {
         doc: doc.into(),
         context: ctx.clone(),
@@ -249,6 +455,7 @@ pub fn doc_view(ws: &Workspace, ctx: &Context, doc: &str) -> Result<DocView> {
         snapshot: snap,
         coverage,
         round,
+        pending,
     })
 }
 
@@ -456,6 +663,9 @@ pub fn update_req(ws: &Workspace, slug: &str, patch: ReqPatch<'_>, by: &str) -> 
     if let Some(r) = patch.reason {
         cur.reason = Some(r.into());
     }
+    if before.status != cur.status || before.statement != cur.statement {
+        cur.suspect = None;
+    }
     let mut h = History::new(by, "update");
     if before.status != cur.status {
         h = h.change(Some(&before.status), Some(&cur.status));
@@ -571,6 +781,117 @@ pub fn flag_question(
     Ok(q)
 }
 
+/// Answer a question (`obj~qst-apply~1`, `obj~qst-conflict~1`).
+pub fn answer_question(
+    ws: &Workspace,
+    slug: &str,
+    reading: &str,
+    note: Option<&str>,
+    by: &str,
+) -> Result<Question> {
+    let _l = ws.store.lock()?;
+    let mut revs = ws.store.qst_revs(slug)?;
+    let q = revs
+        .last_mut()
+        .ok_or_else(|| anyhow!("no question `{slug}`"))?;
+    if q.status != QstStatus::Open {
+        bail!("question is {:?}", q.status);
+    }
+    if !q.readings.is_empty() && !q.readings.iter().any(|r| r.key == reading) {
+        bail!("unknown reading `{reading}`");
+    }
+    let ans = Answer {
+        reading: reading.into(),
+        note: note.map(String::from).filter(|s| !s.trim().is_empty()),
+        by: by.into(),
+        at: now(),
+    };
+    // conflict: any affected requirement's current rev moved since the question was raised
+    let mut conflicts = vec![];
+    for (i, a) in q.affects.iter().enumerate() {
+        let cur = ws.store.current_req(&a.slug)?;
+        let raised_rev = q.affects_revs.get(i).map(|r| r.rev).unwrap_or(a.rev);
+        match cur {
+            Some(c) if c.id.rev != raised_rev => conflicts.push(format!(
+                "{} is now rev {} (was {})",
+                a.slug, c.id.rev, raised_rev
+            )),
+            None => conflicts.push(format!("{} no longer exists", a.slug)),
+            _ => {}
+        }
+    }
+    if !conflicts.is_empty() {
+        q.pending = Some(ans);
+        q.history
+            .push(History::new(by, "answer-held").note(conflicts.join("; ")));
+        let out = q.clone();
+        ws.store.save_qst_revs(slug, &revs)?;
+        return Ok(out);
+    }
+    q.answer = Some(ans);
+    q.pending = None;
+    q.status = QstStatus::Answered;
+    q.history
+        .push(History::new(by, "answer").note(reading.to_string()));
+    let out = q.clone();
+    ws.store.save_qst_revs(slug, &revs)?;
+    for a in &out.affects {
+        let mut rr = ws.store.req_revs(&a.slug)?;
+        if let Some(cur) = rr.last_mut() {
+            cur.history.push(
+                History::new(by, "question-answered").note(format!("{} → {reading}", out.id)),
+            );
+            ws.store.save_req_revs(&a.slug, &rr)?;
+        }
+    }
+    Ok(out)
+}
+
+/// Resolve a held answer after the human has looked at the conflict: apply it anyway or discard.
+pub fn resolve_held_answer(ws: &Workspace, slug: &str, apply: bool, by: &str) -> Result<Question> {
+    let _l = ws.store.lock()?;
+    let mut revs = ws.store.qst_revs(slug)?;
+    let q = revs
+        .last_mut()
+        .ok_or_else(|| anyhow!("no question `{slug}`"))?;
+    let held = q.pending.take().ok_or_else(|| anyhow!("no held answer"))?;
+    if apply {
+        q.answer = Some(held);
+        q.status = QstStatus::Answered;
+        // re-pin affects revs to current so the conflict is acknowledged
+        let mut pinned = vec![];
+        for a in &q.affects {
+            pinned.push(
+                ws.store
+                    .current_req(&a.slug)?
+                    .map(|c| c.id)
+                    .unwrap_or(a.clone()),
+            );
+        }
+        q.affects_revs = pinned;
+        q.history
+            .push(History::new(by, "answer").note("applied after conflict review"));
+    } else {
+        q.history.push(History::new(by, "answer-discarded"));
+    }
+    let out = q.clone();
+    ws.store.save_qst_revs(slug, &revs)?;
+    Ok(out)
+}
+
+pub fn withdraw_question(ws: &Workspace, slug: &str, by: &str) -> Result<Question> {
+    let _l = ws.store.lock()?;
+    let mut revs = ws.store.qst_revs(slug)?;
+    let q = revs
+        .last_mut()
+        .ok_or_else(|| anyhow!("no question `{slug}`"))?;
+    q.status = QstStatus::Withdrawn;
+    q.history.push(History::new(by, "withdraw"));
+    let out = q.clone();
+    ws.store.save_qst_revs(slug, &revs)?;
+    Ok(out)
+}
+
 /// Close the open round if residue == 0 (`obj~round-close~1`). Verdict confirmation arrives in UM3.
 pub fn close_round(ws: &Workspace, ctx: &Context, doc: &str) -> Result<Round> {
     let _l = ws.store.lock()?;
@@ -609,6 +930,95 @@ pub fn close_round(ws: &Workspace, ctx: &Context, doc: &str) -> Result<Round> {
     r.summary = Some(summary);
     ws.store.save_round(&r)?;
     Ok(r)
+}
+
+// ---------- PR contexts (`ui~pr-view~1`) ----------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrSummary {
+    pub number: u64,
+    pub title: String,
+    pub head: String,
+    pub head_ref: String,
+    pub base_ref: String,
+    pub author: String,
+    pub updated_at: String,
+    pub draft: bool,
+    /// Tracked docs this PR touches.
+    pub touches: Vec<String>,
+}
+
+pub fn list_prs(ws: &Workspace) -> Result<Vec<PrSummary>> {
+    let cfg = ws.store.repo()?;
+    let prs = repo::list_prs(&cfg.github)?;
+    Ok(prs
+        .into_iter()
+        .map(|p| {
+            let files: Vec<String> = p
+                .files
+                .iter()
+                .filter_map(|f| f.get("path").and_then(|x| x.as_str()).map(String::from))
+                .collect();
+            PrSummary {
+                touches: cfg
+                    .tracked
+                    .iter()
+                    .filter(|t| files.contains(&t.path))
+                    .map(|t| t.path.clone())
+                    .collect(),
+                number: p.number,
+                title: p.title,
+                head: p.head,
+                head_ref: p.head_ref,
+                base_ref: p.base_ref,
+                author: p
+                    .author
+                    .get("login")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                updated_at: p.updated_at,
+                draft: p.draft,
+            }
+        })
+        .collect())
+}
+
+/// Open a PR context for a doc: fetch, snapshot the doc at the PR head, and (if the PR text
+/// differs from the base snapshot) compute the verdict list against the base classification.
+/// Returns the context to use with `doc_view`.
+pub fn open_pr(ws: &Workspace, pr: u64, doc: &str) -> Result<Context> {
+    let cfg = ws.store.repo()?;
+    if !cfg.tracked.iter().any(|t| t.path == doc) {
+        bail!("{doc} is not a tracked doc");
+    }
+    let _ = repo::fetch(&ws.git);
+    let head = repo::head_sha(&ws.git, &repo::pr_ref(pr))
+        .with_context(|| format!("PR #{pr} head not fetched"))?;
+    let ctx = Context::Pr {
+        pr,
+        head: head.clone(),
+    };
+    let _l = ws.store.lock()?;
+    let (content, _) = repo::read_blob(&ws.git, &repo::pr_ref(pr), doc)?
+        .ok_or_else(|| anyhow!("{doc} not present on PR #{pr}"))?;
+    let snap = Snapshot::build(doc, &content);
+    ws.store.save_snapshot(&snap)?;
+    ws.store.set_current_sha(&ctx, doc, &snap.sha)?;
+    // Verdicts vs the base classification (base = default branch's current snapshot).
+    let base_ctx = Context::Branch {
+        branch: cfg.default_branch.clone(),
+    };
+    if let Some(base) = ws.store.current_snapshot(&base_ctx, doc)? {
+        if base.sha != snap.sha {
+            let cov = doc_coverage(&ws.store, &base_ctx, &base)?;
+            let recon = build_reconciliation(ws, &base_ctx, &base, &snap, &cov)?;
+            ws.store.save_pending(&ctx, &recon)?;
+        } else {
+            ws.store.clear_pending(&ctx, doc)?;
+        }
+    }
+    Ok(ctx)
 }
 
 // ---------- status ----------
@@ -1186,5 +1596,295 @@ mod group_tests {
             .members
             .is_empty());
         assert!(assign_group(&ws, "validation", &["nope".into()], "cj").is_err());
+    }
+}
+
+#[cfg(test)]
+mod reconcile_tests {
+    use super::*;
+    use crate::reconcile::{Decision, VerdictKind};
+
+    fn commit_file(src: &Path, rel: &str, content: &str, msg: &str) {
+        let r = git2::Repository::open(src).unwrap();
+        std::fs::write(src.join(rel), content).unwrap();
+        let mut idx = r.index().unwrap();
+        idx.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        idx.write().unwrap();
+        let tree = r.find_tree(idx.write_tree().unwrap()).unwrap();
+        let sig = git2::Signature::now("t", "t@t").unwrap();
+        let parent = r.head().unwrap().peel_to_commit().unwrap();
+        r.commit(Some("HEAD"), &sig, &sig, msg, &tree, &[&parent])
+            .unwrap();
+    }
+
+    #[test]
+    fn edit_upstream_then_reconcile() {
+        let (tmp, ws) = tests::fixture();
+        let src = tmp.path().join("src");
+        let ctx = ws.default_context().unwrap();
+        let view = doc_view(&ws, &ctx, "docs/hld.md").unwrap();
+        let find = |t: &str| {
+            view.snapshot
+                .spans
+                .iter()
+                .find(|s| s.text.starts_with(t))
+                .unwrap()
+                .id
+                .clone()
+        };
+        let email = find("The email address shall match");
+        let abn = find("The ABN, when supplied");
+        let guardian = find("Where the applicant is under 18");
+        let intro = find("The intake service accepts");
+        create_req(
+            &ws,
+            &ctx,
+            "docs/hld.md",
+            &[email.clone()],
+            NewReq {
+                statement: "Email shall match RFC 5322.",
+                slug: Some("email-format"),
+                pattern: None,
+                rating: None,
+                owner: None,
+            },
+            "cj",
+        )
+        .unwrap();
+        create_req(
+            &ws,
+            &ctx,
+            "docs/hld.md",
+            &[abn.clone()],
+            NewReq {
+                statement: "ABN shall pass checksum.",
+                slug: Some("abn-checksum"),
+                pattern: None,
+                rating: None,
+                owner: None,
+            },
+            "cj",
+        )
+        .unwrap();
+        create_req(
+            &ws,
+            &ctx,
+            "docs/hld.md",
+            &[guardian.clone()],
+            NewReq {
+                statement: "Minors need a guardian.",
+                slug: Some("guardian"),
+                pattern: None,
+                rating: None,
+                owner: None,
+            },
+            "cj",
+        )
+        .unwrap();
+        mark_non_normative(&ws, &ctx, "docs/hld.md", &[intro.clone()], "cj").unwrap();
+
+        // Edit upstream: reword the email rule, delete the guardian rule, keep ABN, add a sentence.
+        let original = include_str!("../tests/fixtures/sample-hld.md");
+        let edited = original
+            .replace(
+                "The email address shall match RFC 5322 and shall have a resolvable MX record.",
+                "The email address shall match RFC 5322 and must have a resolvable MX record.",
+            )
+            .replace(
+                "Where the applicant is under 18, the system shall require a guardian's details. ",
+                "",
+            )
+            .replace(
+                "## 5. Non-goals",
+                "A brand new paragraph appears here.\n\n## 5. Non-goals",
+            );
+        assert_ne!(original, edited);
+        commit_file(&src, "docs/hld.md", &edited, "edit hld");
+
+        let changes = refresh(&ws).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert!(!changes[0].advanced, "classified doc must not auto-advance");
+        let old_sha = changes[0].from.clone().unwrap();
+        let view = doc_view(&ws, &ctx, "docs/hld.md").unwrap();
+        assert_eq!(view.snapshot.sha, old_sha, "still rendering old snapshot");
+        let pend = view.pending.clone().expect("pending reconciliation");
+        let kinds: std::collections::HashMap<&str, VerdictKind> = pend
+            .verdicts
+            .iter()
+            .map(|v| (v.from.as_str(), v.kind))
+            .collect();
+        assert_eq!(kinds[email.as_str()], VerdictKind::Reworded);
+        assert_eq!(kinds[abn.as_str()], VerdictKind::Unchanged);
+        assert_eq!(kinds[guardian.as_str()], VerdictKind::Missing);
+        assert_eq!(kinds[intro.as_str()], VerdictKind::Unchanged);
+        assert_eq!(pend.added.len(), 1);
+        assert_eq!(pend.unconfirmed(), 2);
+
+        // Round can't close while pending.
+        assert!(close_round(&ws, &ctx, "docs/hld.md").is_err());
+        // Confirm fails until decided.
+        assert!(confirm_reconciliation(&ws, &ctx, "docs/hld.md", "cj").is_err());
+        // Missing can't be accepted.
+        assert!(decide_verdict(&ws, &ctx, "docs/hld.md", &guardian, Decision::Accept).is_err());
+
+        decide_verdict(&ws, &ctx, "docs/hld.md", &email, Decision::MeaningChanged).unwrap();
+        decide_verdict(
+            &ws,
+            &ctx,
+            "docs/hld.md",
+            &guardian,
+            Decision::Retire {
+                reason: "removed from HLD".into(),
+            },
+        )
+        .unwrap();
+        let r = confirm_reconciliation(&ws, &ctx, "docs/hld.md", "cj").unwrap();
+        assert_eq!(r.unconfirmed(), 0);
+
+        // After: pointer advanced, round closed, anchors remapped, mark migrated, guardian retired.
+        let view = doc_view(&ws, &ctx, "docs/hld.md").unwrap();
+        assert_ne!(view.snapshot.sha, old_sha);
+        assert!(view.pending.is_none());
+        assert!(view.round.is_none(), "old round closed by supersede");
+        let rounds = ws.store.rounds(&ctx, "docs/hld.md").unwrap();
+        assert!(rounds[0].closed.is_some());
+        assert!(rounds[0].summary.as_ref().unwrap().verdicts.is_some());
+        let email_req = ws.store.current_req("email-format").unwrap().unwrap();
+        assert!(email_req.suspect.is_some());
+        let new_email_span = view
+            .snapshot
+            .spans
+            .iter()
+            .find(|s| s.text.contains("must have a resolvable"))
+            .unwrap();
+        assert_eq!(email_req.anchors[0].span, new_email_span.id);
+        assert_eq!(
+            ws.store.current_req("guardian").unwrap().unwrap().status,
+            Status::Retired
+        );
+        let cov = &view.coverage;
+        let st = |t: &str| {
+            cov.spans
+                .iter()
+                .find(|(id, _)| view.snapshot.span(id).unwrap().text.starts_with(t))
+                .unwrap()
+                .1
+                .state
+        };
+        assert_eq!(
+            st("The intake service accepts"),
+            crate::coverage::SpanState::NonNormative
+        );
+        assert_eq!(
+            st("The email address shall match"),
+            crate::coverage::SpanState::Mapped
+        );
+        assert_eq!(
+            st("A brand new paragraph"),
+            crate::coverage::SpanState::Unclassified
+        );
+        // suspect clears on edit
+        let r = update_req(
+            &ws,
+            "email-format",
+            ReqPatch {
+                statement: Some("Email must match RFC 5322."),
+                pattern: None,
+                status: None,
+                rating: None,
+                owner: None,
+                reason: None,
+            },
+            "cj",
+        )
+        .unwrap();
+        assert!(r.suspect.is_none());
+    }
+
+    #[test]
+    fn question_answer_and_conflict() {
+        let (_tmp, ws) = tests::fixture();
+        let ctx = ws.default_context().unwrap();
+        let view = doc_view(&ws, &ctx, "docs/hld.md").unwrap();
+        let span = view
+            .snapshot
+            .spans
+            .iter()
+            .find(|s| s.text.starts_with("Rate limits are per partner"))
+            .unwrap()
+            .id
+            .clone();
+        create_req(
+            &ws,
+            &ctx,
+            "docs/hld.md",
+            &[span.clone()],
+            NewReq {
+                statement: "Rate limits shall be per partner key.",
+                slug: Some("rate-limit"),
+                pattern: None,
+                rating: None,
+                owner: None,
+            },
+            "cj",
+        )
+        .unwrap();
+        let q = flag_question(
+            &ws,
+            &ctx,
+            "docs/hld.md",
+            &[span.clone()],
+            NewQuestion {
+                quote: "burst 200",
+                materiality: Level::H,
+                readings: vec![
+                    ("a".into(), "per minute".into()),
+                    ("b".into(), "per second".into()),
+                ],
+                default: Some("a".into()),
+                affects: vec![Id::new("req", "rate-limit", 1).unwrap()],
+                slug: Some("burst-unit"),
+            },
+            "cj",
+        )
+        .unwrap();
+        assert_eq!(q.affects_revs[0].rev, 1);
+        // bump the req → conflict on answer
+        bump_req(
+            &ws,
+            "rate-limit",
+            "Rate limits shall be per partner key, burst 200/min.",
+            "cj",
+        )
+        .unwrap();
+        let held = answer_question(&ws, "burst-unit", "a", None, "cj").unwrap();
+        assert_eq!(held.status, QstStatus::Open);
+        assert!(held.pending.is_some());
+        let applied = resolve_held_answer(&ws, "burst-unit", true, "cj").unwrap();
+        assert_eq!(applied.status, QstStatus::Answered);
+        assert_eq!(applied.answer.unwrap().reading, "a");
+        // no-conflict path
+        let q2 = flag_question(
+            &ws,
+            &ctx,
+            "docs/hld.md",
+            &[span],
+            NewQuestion {
+                quote: "x",
+                materiality: Level::L,
+                readings: vec![],
+                default: None,
+                affects: vec![],
+                slug: Some("plain"),
+            },
+            "cj",
+        )
+        .unwrap();
+        let a = answer_question(&ws, "plain", "free-text", Some("whatever"), "cj").unwrap();
+        assert_eq!(a.status, QstStatus::Answered);
+        assert!(answer_question(&ws, "plain", "a", None, "cj").is_err());
+        let w = withdraw_question(&ws, &q2.id.slug, "cj");
+        assert!(w.is_ok());
     }
 }

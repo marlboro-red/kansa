@@ -148,6 +148,10 @@ pub struct ReqRev {
     /// Required when `status == Retired`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Set by reconciliation when a source sentence's meaning changed; cleared on the next
+    /// human edit of statement/status ("suspect link", `ui~oversight~1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspect: Option<String>,
     #[serde(default)]
     pub anchors: Vec<Anchor>,
     #[serde(default)]
@@ -166,6 +170,7 @@ impl ReqRev {
             rating: None,
             owner: None,
             reason: None,
+            suspect: None,
             anchors: vec![],
             questions: vec![],
             history: vec![History::new(by, "create")],

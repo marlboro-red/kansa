@@ -78,6 +78,15 @@ pub const COMMANDS: &[&str] = &[
     "assign_group",
     "unassign_group",
     "update_group",
+    "decide_verdict",
+    "confirm_reconciliation",
+    "list_questions",
+    "answer_question",
+    "resolve_held_answer",
+    "withdraw_question",
+    "list_prs",
+    "open_pr",
+    "rounds",
 ];
 
 /// Dispatch a command by name with JSON args. Blocking; callers run it off the UI thread.
@@ -331,6 +340,71 @@ pub fn call(name: &str, args: &Value) -> Result<Value> {
                 desc.as_ref().map(|d| d.as_deref()),
                 &by(args),
             )?)
+        }
+        "decide_verdict" => {
+            let w = ws(args)?;
+            let c = ctx_of(&w, args)?;
+            let decision: crate::reconcile::Decision = arg(args, "decision")?;
+            j(ops::decide_verdict(
+                &w,
+                &c,
+                &arg::<String>(args, "doc")?,
+                &arg::<String>(args, "span")?,
+                decision,
+            )?)
+        }
+        "confirm_reconciliation" => {
+            let w = ws(args)?;
+            let c = ctx_of(&w, args)?;
+            j(ops::confirm_reconciliation(
+                &w,
+                &c,
+                &arg::<String>(args, "doc")?,
+                &by(args),
+            )?)
+        }
+        "list_questions" => j(ws(args)?.store.current_qsts()?),
+        "answer_question" => {
+            let w = ws(args)?;
+            let note: Option<String> = arg_opt(args, "note")?;
+            j(ops::answer_question(
+                &w,
+                &arg::<String>(args, "slug")?,
+                &arg::<String>(args, "reading")?,
+                note.as_deref(),
+                &by(args),
+            )?)
+        }
+        "resolve_held_answer" => {
+            let w = ws(args)?;
+            j(ops::resolve_held_answer(
+                &w,
+                &arg::<String>(args, "slug")?,
+                arg::<bool>(args, "apply")?,
+                &by(args),
+            )?)
+        }
+        "withdraw_question" => {
+            let w = ws(args)?;
+            j(ops::withdraw_question(
+                &w,
+                &arg::<String>(args, "slug")?,
+                &by(args),
+            )?)
+        }
+        "list_prs" => j(ops::list_prs(&ws(args)?)?),
+        "open_pr" => {
+            let w = ws(args)?;
+            j(ops::open_pr(
+                &w,
+                arg::<u64>(args, "pr")?,
+                &arg::<String>(args, "doc")?,
+            )?)
+        }
+        "rounds" => {
+            let w = ws(args)?;
+            let c = ctx_of(&w, args)?;
+            j(w.store.rounds(&c, &arg::<String>(args, "doc")?)?)
         }
         _ => bail!("unknown command `{name}`"),
     }
