@@ -1,12 +1,18 @@
 import { createResource, createSignal, ErrorBoundary, For, Show, type Component } from "solid-js";
 import { api, type RepoSummary } from "./api";
 import { Classifier, type Toast } from "./Classifier";
+import { InventoryView } from "./InventoryView";
 
-type Route = { kind: "home" } | { kind: "repo"; github: string } | { kind: "doc"; github: string; doc: string };
+type Route =
+  | { kind: "home" }
+  | { kind: "repo"; github: string }
+  | { kind: "inventory"; github: string }
+  | { kind: "doc"; github: string; doc: string; span?: string };
 
 const App: Component = () => {
   const [repos, { refetch: refetchRepos }] = createResource(api.listRepos);
-  const [route, setRoute] = createSignal<Route>({ kind: "home" });
+  const [route, setRouteRaw] = createSignal<Route>(loadRoute());
+  const setRoute = (r: Route) => { setRouteRaw(r); try { localStorage.setItem("kansa.route", JSON.stringify(r)); } catch {} };
   const [toast, setToast] = createSignal<Toast | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
   let toastTimer: number | undefined;
@@ -51,8 +57,13 @@ const App: Component = () => {
                     <span class="name">{r.github}</span>
                     <span class="meta">{r.default_branch} · {r.tracked.length} tracked</span>
                   </button>
-                  <Show when={currentGithub() === r.github && r.tracked.length}>
+                  <Show when={currentGithub() === r.github}>
                     <DocNav repo={r} current={currentDoc()} onOpen={(d) => setRoute({ kind: "doc", github: r.github, doc: d })} />
+                    <div class="docnav">
+                      <button classList={{ active: route().kind === "inventory" }} onClick={() => setRoute({ kind: "inventory", github: r.github })}>
+                        <span class="dot inv-dot" /><span>Inventory</span>
+                      </button>
+                    </div>
                   </Show>
                 </>
               )}
@@ -85,10 +96,19 @@ const App: Component = () => {
             />
           )}
         </Show>
+        <Show when={route().kind === "inventory" && currentGithub()}>
+          {(gh) => (
+            <InventoryView
+              github={gh()}
+              onOpenAnchor={(doc, span) => setRoute({ kind: "doc", github: gh(), doc, span })}
+              toast={showToast}
+            />
+          )}
+        </Show>
         <Show when={route().kind === "doc" && route()} keyed>
           {(r) => r.kind === "doc" && (
             <ErrorBoundary fallback={(e) => <div class="empty"><h1>Something broke</h1><pre class="mono" style={{ "white-space": "pre-wrap" }}>{String(e?.stack ?? e)}</pre></div>}>
-              <Classifier github={r.github} doc={r.doc} onBack={() => setRoute({ kind: "repo", github: r.github })} toast={showToast} />
+              <Classifier github={r.github} doc={r.doc} initialSpan={r.span} onBack={() => setRoute({ kind: "repo", github: r.github })} toast={showToast} />
             </ErrorBoundary>
           )}
         </Show>
@@ -96,6 +116,11 @@ const App: Component = () => {
     </div>
   );
 };
+
+function loadRoute(): Route {
+  try { const r = JSON.parse(localStorage.getItem("kansa.route") ?? ""); if (r && typeof r.kind === "string") return r as Route; } catch {}
+  return { kind: "home" };
+}
 
 const DocNav: Component<{ repo: RepoSummary; current: string | null; onOpen: (doc: string) => void }> = (p) => {
   const [status] = createResource(() => p.repo.github, api.repoStatus);

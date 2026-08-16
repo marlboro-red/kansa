@@ -16,12 +16,15 @@ import { api, type DocView, type Req, type Span, type SpanState, type SpanStatus
 import { ReqPalette } from "./ReqPalette";
 import { QuestionDialog } from "./QuestionDialog";
 import { Inventory } from "./Inventory";
+import { GroupPalette } from "./GroupPalette";
 
 export type Toast = { kind: "error" | "info"; text: string };
 
 type Props = {
   github: string;
   doc: string;
+  /** Land on this span (click-through from the inventory). */
+  initialSpan?: string;
   onBack: () => void;
   toast: (t: Toast | null) => void;
 };
@@ -32,6 +35,14 @@ export type SpanRow = { span: Span; status: SpanStatus; pending: boolean };
 export const Classifier: Component<Props> = (p) => {
   const [view, { mutate }] = createResource(() => [p.github, p.doc] as const, ([g, d]) => api.docView(g, d));
   const [reqs, { refetch: refetchReqs }] = createResource(() => p.github, api.listReqs);
+  const [groups, { refetch: refetchGroups }] = createResource(() => p.github, api.listGroups);
+  const groupsByReq = createMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const g of groups() ?? []) for (const mem of g.group.members) { const k = slugOf(mem); m.set(k, [...(m.get(k) ?? []), g.group.title]); }
+    return m;
+  });
+  const [groupLens, setGroupLens] = createSignal<string | null>(null); // group slug filter (`ui~grp-lens~1`)
+  const [groupTargets, setGroupTargets] = createSignal<string[]>([]);
 
   // ---- optimistic patches: span id → status override
   const [patches, setPatches] = createStore<Record<string, SpanStatus>>({});
@@ -65,7 +76,7 @@ export const Classifier: Component<Props> = (p) => {
   const [cursor, setCursor] = createSignal(0);
   const [anchor, setAnchor] = createSignal<number | null>(null);
   const [linkedReq, setLinkedReq] = createSignal<string | null>(null); // slug highlighted from inventory
-  const [dialog, setDialog] = createSignal<"req" | "question" | "help" | null>(null);
+  const [dialog, setDialog] = createSignal<"req" | "question" | "help" | "group" | null>(null);
   const [busy, setBusy] = createSignal(false);
 
   const selRange = createMemo<[number, number]>(() => {
@@ -88,6 +99,15 @@ export const Classifier: Component<Props> = (p) => {
     const m = new Map<string, Req>();
     for (const r of reqs() ?? []) m.set(slugOf(r.id), r);
     return m;
+  });
+  const lensSpanIds = createMemo(() => {
+    const slug = groupLens();
+    if (!slug) return null;
+    const g = (groups() ?? []).find((x) => slugOf(x.group.id) === slug);
+    const members = new Set((g?.group.members ?? []).map(slugOf));
+    const ids = new Set<string>();
+    for (const r of reqs() ?? []) if (members.has(slugOf(r.id))) for (const a of r.anchors) if (a.doc === p.doc) ids.add(a.span);
+    return ids;
   });
   const linkedSpanIds = createMemo(() => {
     const slug = linkedReq();
@@ -216,6 +236,30 @@ export const Classifier: Component<Props> = (p) => {
     }
   }
 
+  function openGroupPalette(slugs?: string[]) {
+    const targets = slugs ?? (linkedReq() ? [linkedReq()!] : (current()?.status.reqs ?? []).map(slugOf));
+    if (!targets.length) { p.toast({ kind: "info", text: "Select a mapped sentence (or a requirement in the panel) first, then press g." }); return; }
+    setGroupTargets(targets);
+    setDialog("group");
+  }
+  async function assignToGroup(groupSlug: string) {
+    setDialog(null);
+    try {
+      await api.assignGroup(p.github, groupSlug, groupTargets());
+      refetchGroups();
+      p.toast({ kind: "info", text: `Added ${groupTargets().length === 1 ? `req~${groupTargets()[0]}` : `${groupTargets().length} requirements`} to group.` });
+    } catch (e) { p.toast({ kind: "error", text: String(e) }); }
+  }
+  async function createAndAssign(title: string) {
+    setDialog(null);
+    try {
+      const g = await api.createGroup(p.github, title);
+      await api.assignGroup(p.github, slugOf(g.id), groupTargets());
+      refetchGroups();
+      p.toast({ kind: "info", text: `Created group “${g.title}” and added ${groupTargets().length} requirement(s).` });
+    } catch (e) { p.toast({ kind: "error", text: String(e) }); }
+  }
+
   // ---- keyboard
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null;
@@ -238,8 +282,10 @@ export const Classifier: Component<Props> = (p) => {
       case "q": e.preventDefault(); setDialog("question"); break;
       case "x": case "Backspace": e.preventDefault(); clearClassification(); break;
       case "e": e.preventDefault(); { const s = current()?.status.reqs[0]; if (s) setLinkedReq(slugOf(s)); } break;
-      case "g": e.preventDefault(); move(0); break;
+      case "g": e.preventDefault(); openGroupPalette(); break;
       case "G": e.preventDefault(); move(rows().length - 1); break;
+      case "Home": e.preventDefault(); move(0); break;
+      case "End": e.preventDefault(); move(rows().length - 1); break;
       case "?": e.preventDefault(); setDialog(dialog() === "help" ? null : "help"); break;
       case "Escape": setAnchor(null); setLinkedReq(null); break;
     }
@@ -252,7 +298,8 @@ export const Classifier: Component<Props> = (p) => {
   createEffect(() => {
     if (!landed && view() && rows().length) {
       landed = true;
-      queueMicrotask(() => nextUnclassified(-1));
+      const target = p.initialSpan ? rows().findIndex((r) => r.span.id === p.initialSpan) : -1;
+      queueMicrotask(() => { if (target >= 0) move(target); else nextUnclassified(-1); });
     }
   });
 
@@ -266,6 +313,12 @@ export const Classifier: Component<Props> = (p) => {
           <span class="doc">{p.doc}</span>
         </div>
         <span class="spacer" />
+        <Show when={(groups() ?? []).length}>
+          <select class="lens" value={groupLens() ?? ""} onChange={(e) => setGroupLens(e.currentTarget.value || null)} title="Group lens — dim sentences outside a group">
+            <option value="">all groups</option>
+            <For each={groups()}>{(g) => <option value={slugOf(g.group.id)}>{g.group.title} ({g.group.members.length})</option>}</For>
+          </select>
+        </Show>
         <Show when={view()?.round} fallback={<span class="round">no open round</span>}>
           {(r) => <span class="round">round <b>#{r().n}</b> · {shortSha(r().snapshot)}</span>}
         </Show>
@@ -286,6 +339,7 @@ export const Classifier: Component<Props> = (p) => {
                   cursor={cursor()}
                   selRange={selRange()}
                   linked={linkedSpanIds()}
+                  lens={lensSpanIds()}
                   dimOthers={!!linkedReq()}
                   onPick={(i, shift) => { move(i, shift); }}
                   onPickReq={(slug) => setLinkedReq(slug)}
@@ -299,7 +353,8 @@ export const Classifier: Component<Props> = (p) => {
 
         <Inventory
           doc={p.doc}
-          reqs={(reqs() ?? []).filter((r) => r.status !== "retired" || true)}
+          reqs={reqs() ?? []}
+          groupsByReq={groupsByReq()}
           linked={linkedReq()}
           currentReqIds={current()?.status.reqs ?? []}
           onSelect={(slug) => {
@@ -309,7 +364,8 @@ export const Classifier: Component<Props> = (p) => {
             if (i >= 0) { setCursor(i); setAnchor(null); scrollTo(i); }
           }}
           onJumpSpan={(id) => { const i = rows().findIndex((r) => r.span.id === id); if (i >= 0) move(i); }}
-          onChanged={async () => { refetchReqs(); mutate(await api.docView(p.github, p.doc)); }}
+          onChanged={async () => { refetchReqs(); refetchGroups(); mutate(await api.docView(p.github, p.doc)); }}
+          onGroup={(slug) => openGroupPalette([slug])}
           github={p.github}
           toast={p.toast}
         />
@@ -347,6 +403,9 @@ export const Classifier: Component<Props> = (p) => {
       <Show when={dialog() === "question"}>
         <QuestionDialog quote={selectedText()} onClose={() => setDialog(null)} onSubmit={raiseQuestion} />
       </Show>
+      <Show when={dialog() === "group"}>
+        <GroupPalette groups={groups() ?? []} targets={groupTargets()} onClose={() => setDialog(null)} onAssign={assignToGroup} onCreate={createAndAssign} />
+      </Show>
       <Show when={dialog() === "help"}>
         <div class="help">
           <table>
@@ -359,7 +418,8 @@ export const Classifier: Component<Props> = (p) => {
               <tr><td><kbd>q</kbd></td><td>flag as a question</td></tr>
               <tr><td><kbd>x</kbd></td><td>clear classification</td></tr>
               <tr><td><kbd>e</kbd></td><td>show linked requirement</td></tr>
-              <tr><td><kbd>g</kbd> / <kbd>G</kbd></td><td>top / bottom</td></tr>
+              <tr><td><kbd>g</kbd></td><td>add the linked requirement to a group</td></tr>
+              <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>top / bottom</td></tr>
               <tr><td><kbd>esc</kbd></td><td>clear selection / highlight</td></tr>
             </tbody>
           </table>
@@ -408,6 +468,7 @@ const DocBody: Component<{
   cursor: number;
   selRange: [number, number];
   linked: Set<string>;
+  lens: Set<string> | null;
   dimOthers: boolean;
   onPick: (i: number, shift: boolean) => void;
   onPickReq: (slug: string) => void;
@@ -455,7 +516,7 @@ const DocBody: Component<{
           current: p.cursor === i,
           selected: i >= p.selRange[0] && i <= p.selRange[1] && p.selRange[0] !== p.selRange[1],
           linked: p.linked.has(r().span.id),
-          dim: p.dimOthers && !p.linked.has(r().span.id),
+          dim: (p.dimOthers && !p.linked.has(r().span.id)) || (!!p.lens && !p.lens.has(r().span.id) && !r().status.structural),
           pending: r().pending,
         }}
         data-sid={r().span.id}

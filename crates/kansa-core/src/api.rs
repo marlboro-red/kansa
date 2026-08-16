@@ -72,6 +72,12 @@ pub const COMMANDS: &[&str] = &[
     "close_round",
     "list_reqs",
     "export",
+    "inventory",
+    "list_groups",
+    "create_group",
+    "assign_group",
+    "unassign_group",
+    "update_group",
 ];
 
 /// Dispatch a command by name with JSON args. Blocking; callers run it off the UI thread.
@@ -279,6 +285,52 @@ pub fn call(name: &str, args: &Value) -> Result<Value> {
                 "exception_count": res.exception_count,
                 "validate": validate,
             }))
+        }
+        "inventory" => j(ops::inventory(&ws(args)?)?),
+        "list_groups" => j(ops::group_rollups(&ws(args)?)?),
+        "create_group" => {
+            let w = ws(args)?;
+            let desc: Option<String> = arg_opt(args, "description")?;
+            j(ops::create_group(
+                &w,
+                &arg::<String>(args, "title")?,
+                desc.as_deref(),
+                &by(args),
+            )?)
+        }
+        "assign_group" => {
+            let w = ws(args)?;
+            j(ops::assign_group(
+                &w,
+                &arg::<String>(args, "group")?,
+                &arg::<Vec<String>>(args, "reqs")?,
+                &by(args),
+            )?)
+        }
+        "unassign_group" => {
+            let w = ws(args)?;
+            j(ops::unassign_group(
+                &w,
+                &arg::<String>(args, "group")?,
+                &arg::<Vec<String>>(args, "reqs")?,
+                &by(args),
+            )?)
+        }
+        "update_group" => {
+            let w = ws(args)?;
+            let title: Option<String> = arg_opt(args, "title")?;
+            let desc: Option<Option<String>> = if args.get("description").is_some() {
+                Some(arg_opt(args, "description")?)
+            } else {
+                None
+            };
+            j(ops::update_group(
+                &w,
+                &arg::<String>(args, "group")?,
+                title.as_deref(),
+                desc.as_ref().map(|d| d.as_deref()),
+                &by(args),
+            )?)
         }
         _ => bail!("unknown command `{name}`"),
     }

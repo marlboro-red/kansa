@@ -131,6 +131,7 @@ kbd {
 .docnav button.active { color: var(--ink); background: var(--panel-2); }
 .docnav .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--coral); flex: none; }
 .docnav .dot.done { background: var(--jade); }
+.docnav .dot.inv-dot { background: transparent; border: 1.5px solid var(--ink-3); }
 .docnav .residue { margin-left: auto; font: 11px var(--mono); color: var(--coral); }
 .status-line { padding: 9px 16px; border-top: 1px solid var(--line); font-size: 12px; display: flex; gap: 8px; align-items: center; color: var(--ink-3); }
 .spinner { width: 10px; height: 10px; border: 2px solid var(--line-2); border-top-color: var(--amber); border-radius: 50%; animation: spin 0.8s linear infinite; }
@@ -177,6 +178,7 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .topbar .crumb .doc { font-family: var(--mono); font-size: 12px; }
 .topbar .spacer { flex: 1; }
 .topbar .round { color: var(--ink-3); }
+.topbar select.lens { width: auto; padding: 4px 8px; font-size: 12px; background: var(--panel-2); }
 .topbar .round b { color: var(--ink-2); font-weight: 600; }
 
 .work { display: grid; grid-template-columns: 1fr 340px; min-height: 0; }
@@ -341,3 +343,63 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .help table { border-collapse: collapse; width: 100%; }
 .help td { padding: 3px 4px; }
 .help td:first-child { width: 90px; }
+
+/* ---------- inventory view ---------- */
+.invview { display: grid; grid-template-rows: auto auto 1fr; height: 100%; min-height: 0; }
+.invview-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 18px 24px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.invview-head .rollup { margin: 6px 0 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.export-result { margin: 10px 24px 0; padding: 10px 14px; border: 1px solid var(--jade); background: var(--jade-soft); border-radius: var(--r); font-size: 12.5px; display: flex; flex-direction: column; gap: 6px; }
+.export-result.bad { border-color: var(--coral); background: var(--coral-soft); }
+.export-result pre { margin: 0; font: 11.5px/1.5 var(--mono); white-space: pre-wrap; }
+.export-result button { align-self: flex-end; }
+.invview-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; min-height: 0; }
+.invview-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.filters { display: flex; gap: 8px; align-items: center; padding: 10px 24px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.filters input { width: 260px; }
+.filters select { width: auto; padding: 5px 8px; font-size: 12px; }
+.filters .count { margin-left: auto; font-size: 12px; }
+.seg.small button { padding: 4px 8px; font-size: 12px; }
+.bulk { display: flex; gap: 6px; align-items: center; padding: 8px 24px; background: var(--amber-soft); border-bottom: 1px solid var(--line); font-size: 12.5px; flex-wrap: wrap; }
+.tablewrap { overflow-y: auto; overflow-x: hidden; flex: 1; padding: 0 24px 40px; }
+h2.sec { position: sticky; top: 0; background: var(--paper); padding: 12px 0 6px; margin: 0; z-index: 1; }
+table.inv-table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 8px; }
+table.inv-table .c-chk { width: 26px; padding-left: 4px; padding-right: 4px; }
+table.inv-table .c-id { width: 150px; }
+table.inv-table .c-status { width: 92px; }
+table.inv-table .c-docs { width: 96px; }
+table.inv-table .c-groups { width: 110px; }
+table.inv-table .c-q { width: 30px; }
+table.inv-table td.stmt .meta { display: flex; gap: 8px; font: 11px var(--sans); color: var(--ink-3); margin-top: 3px; }
+table.inv-table td.stmt .text.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+table.inv-table .narrow-only { display: none; }
+@media (max-width: 1500px) {
+  table.inv-table .c-groups, table.inv-table .c-docs { display: none; }
+  table.inv-table .narrow-only { display: inline; }
+}
+table.inv-table th { text-align: left; font-weight: 500; color: var(--ink-3); font-size: 11.5px; padding: 8px 8px 6px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--paper); z-index: 1; }
+table.inv-table td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; }
+table.inv-table td.id { white-space: nowrap; }
+table.inv-table td.stmt { font-family: var(--serif); font-size: 13.5px; line-height: 1.4; }
+table.inv-table td.small { font-size: 11.5px; color: var(--ink-2); }
+table.inv-table tr { cursor: pointer; }
+table.inv-table tr:hover td { background: var(--panel); }
+table.inv-table tr.sel td { background: var(--amber-soft); }
+table.inv-table tr.open td { background: var(--panel-2); }
+table.inv-table input[type="checkbox"] { accent-color: var(--amber); }
+.invview-side { border-left: 1px solid var(--line); background: var(--panel); overflow: auto; display: flex; flex-direction: column; min-height: 0; }
+.invview-side .drawer { border-top: 0; border-bottom: 1px solid var(--line); max-height: none; }
+.groups { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.groups-head { display: flex; align-items: baseline; gap: 8px; }
+.newgroup { display: flex; gap: 6px; }
+.groupcard { text-align: left; background: var(--paper); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.groupcard.active { border-color: var(--amber); }
+.groupcard .row1 { display: flex; justify-content: space-between; align-items: baseline; }
+.groupcard .desc { font-size: 11.5px; }
+.groupcard .bar { display: flex; height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; }
+.groupcard .bar i { display: block; height: 100%; }
+.groupcard .bar .seg-extracted { background: var(--line-2); }
+.groupcard .bar .seg-assumed { background: var(--amber); }
+.groupcard .bar .seg-confirmed { background: var(--jade); }
+.groupcard .bar .seg-disputed { background: var(--coral); }
+.groupcard .bar .seg-retired { background: var(--ink-3); }
+.groupcard .row3 { font-size: 11px; display: flex; flex-direction: column; gap: 2px; }

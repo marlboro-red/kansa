@@ -132,6 +132,24 @@ export type Question = {
   affects: string[];
 };
 
+export type Group = {
+  id: string;
+  title: string;
+  description?: string | null;
+  members: string[];
+  history: { at: string; by: string; op: string }[];
+};
+
+export type GroupRollup = {
+  group: Group;
+  members_by_status: Record<string, number>;
+  open_questions: number;
+  anchors: number;
+  findings: { member: string; kind: "missing" | "retired" | "stale-rev" }[];
+};
+
+export type InventoryRow = Req & { groups: string[]; docs: string[]; open_questions: number };
+
 export type ExportResult = {
   inventory: string;
   exceptions: string;
@@ -182,4 +200,12 @@ export const api = {
   ) => call<Question>("flag_question", { github, doc, spans, ...q }),
   closeRound: (github: string, doc: string) => call<Round>("close_round", { github, doc }),
   export: (github: string, out?: string) => call<ExportResult>("export", { github, out }),
+
+  inventory: (github: string) => call<InventoryRow[]>("inventory", { github }),
+  listGroups: (github: string) => call<GroupRollup[]>("list_groups", { github }),
+  createGroup: (github: string, title: string, description?: string) => call<Group>("create_group", { github, title, description }),
+  assignGroup: (github: string, group: string, reqs: string[]) => call<Group>("assign_group", { github, group, reqs }),
+  unassignGroup: (github: string, group: string, reqs: string[]) => call<Group>("unassign_group", { github, group, reqs }),
+  updateGroup: (github: string, group: string, patch: { title?: string; description?: string | null }) =>
+    call<Group>("update_group", { github, group, ...patch }),
 };

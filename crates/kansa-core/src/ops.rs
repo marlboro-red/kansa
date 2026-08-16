@@ -889,3 +889,302 @@ mod tests {
         assert_eq!(view.coverage.meter.open_questions, 1);
     }
 }
+
+// ---------- groups (spec §4.3) ----------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupRollup {
+    pub group: Group,
+    pub members_by_status: std::collections::BTreeMap<String, usize>,
+    pub open_questions: usize,
+    pub anchors: usize,
+    /// Members that no longer resolve or are retired (`obj~grp-integrity~1`).
+    pub findings: Vec<GroupFinding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupFinding {
+    pub member: Id,
+    pub kind: String, // "missing" | "retired" | "stale-rev"
+}
+
+pub fn group_rollups(ws: &Workspace) -> Result<Vec<GroupRollup>> {
+    let reqs = ws.store.current_reqs()?;
+    let by_slug: std::collections::HashMap<&str, &ReqRev> =
+        reqs.iter().map(|r| (r.id.slug.as_str(), r)).collect();
+    let qsts = ws.store.current_qsts()?;
+    let mut out = vec![];
+    for g in ws.store.current_grps()? {
+        let mut r = GroupRollup {
+            group: g.clone(),
+            members_by_status: Default::default(),
+            open_questions: 0,
+            anchors: 0,
+            findings: vec![],
+        };
+        for m in &g.members {
+            match by_slug.get(m.slug.as_str()) {
+                None => r.findings.push(GroupFinding {
+                    member: m.clone(),
+                    kind: "missing".into(),
+                }),
+                Some(req) => {
+                    *r.members_by_status
+                        .entry(req.status.as_str().into())
+                        .or_default() += 1;
+                    r.anchors += req.anchors.len();
+                    if req.status == Status::Retired {
+                        r.findings.push(GroupFinding {
+                            member: m.clone(),
+                            kind: "retired".into(),
+                        });
+                    } else if req.id.rev != m.rev {
+                        r.findings.push(GroupFinding {
+                            member: m.clone(),
+                            kind: "stale-rev".into(),
+                        });
+                    }
+                    r.open_questions += qsts
+                        .iter()
+                        .filter(|q| {
+                            q.status == QstStatus::Open
+                                && q.affects.iter().any(|a| a.slug == req.id.slug)
+                        })
+                        .count();
+                }
+            }
+        }
+        out.push(r);
+    }
+    out.sort_by(|a, b| {
+        a.group
+            .title
+            .to_lowercase()
+            .cmp(&b.group.title.to_lowercase())
+    });
+    Ok(out)
+}
+
+pub fn create_group(
+    ws: &Workspace,
+    title: &str,
+    description: Option<&str>,
+    by: &str,
+) -> Result<Group> {
+    let _l = ws.store.lock()?;
+    let title = title.trim();
+    if title.is_empty() {
+        bail!("group title is required");
+    }
+    let base = slugify(title, 32);
+    let mut slug = base.clone();
+    let mut i = 1;
+    while !ws.store.grp_revs(&slug)?.is_empty() {
+        i += 1;
+        slug = format!("{base}-{i}");
+    }
+    let g = Group {
+        id: Id::new("grp", &slug, 1)?,
+        title: title.into(),
+        description: description
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        members: vec![],
+        history: vec![History::new(by, "create")],
+    };
+    ws.store.save_grp_revs(&slug, std::slice::from_ref(&g))?;
+    Ok(g)
+}
+
+/// Add requirements (by slug, at their current rev) to a group. Idempotent.
+pub fn assign_group(
+    ws: &Workspace,
+    group_slug: &str,
+    req_slugs: &[String],
+    by: &str,
+) -> Result<Group> {
+    let _l = ws.store.lock()?;
+    let mut revs = ws.store.grp_revs(group_slug)?;
+    let g = revs
+        .last_mut()
+        .ok_or_else(|| anyhow!("no group `{group_slug}`"))?;
+    let before = g.members.clone();
+    for s in req_slugs {
+        let cur = ws
+            .store
+            .current_req(s)?
+            .ok_or_else(|| anyhow!("no requirement `{s}`"))?;
+        if let Some(existing) = g.members.iter_mut().find(|m| m.slug == cur.id.slug) {
+            *existing = cur.id.clone();
+        } else {
+            g.members.push(cur.id.clone());
+        }
+    }
+    if g.members != before {
+        g.history
+            .push(History::new(by, "members").change(Some(&before), Some(&g.members)));
+    }
+    let out = g.clone();
+    ws.store.save_grp_revs(group_slug, &revs)?;
+    Ok(out)
+}
+
+pub fn unassign_group(
+    ws: &Workspace,
+    group_slug: &str,
+    req_slugs: &[String],
+    by: &str,
+) -> Result<Group> {
+    let _l = ws.store.lock()?;
+    let mut revs = ws.store.grp_revs(group_slug)?;
+    let g = revs
+        .last_mut()
+        .ok_or_else(|| anyhow!("no group `{group_slug}`"))?;
+    let before = g.members.clone();
+    g.members.retain(|m| !req_slugs.contains(&m.slug));
+    if g.members != before {
+        g.history
+            .push(History::new(by, "members").change(Some(&before), Some(&g.members)));
+    }
+    let out = g.clone();
+    ws.store.save_grp_revs(group_slug, &revs)?;
+    Ok(out)
+}
+
+pub fn update_group(
+    ws: &Workspace,
+    group_slug: &str,
+    title: Option<&str>,
+    description: Option<Option<&str>>,
+    by: &str,
+) -> Result<Group> {
+    let _l = ws.store.lock()?;
+    let mut revs = ws.store.grp_revs(group_slug)?;
+    let g = revs
+        .last_mut()
+        .ok_or_else(|| anyhow!("no group `{group_slug}`"))?;
+    if let Some(t) = title {
+        if !t.trim().is_empty() {
+            g.title = t.trim().into();
+        }
+    }
+    if let Some(d) = description {
+        g.description = d.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    }
+    g.history.push(History::new(by, "update"));
+    let out = g.clone();
+    ws.store.save_grp_revs(group_slug, &revs)?;
+    Ok(out)
+}
+
+/// Repo-wide inventory row: current rev + derived group titles + doc list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InventoryRow {
+    #[serde(flatten)]
+    pub req: ReqRev,
+    pub groups: Vec<String>,
+    pub docs: Vec<String>,
+    pub open_questions: usize,
+}
+
+pub fn inventory(ws: &Workspace) -> Result<Vec<InventoryRow>> {
+    let groups = ws.store.groups_by_req()?;
+    let qsts = ws.store.current_qsts()?;
+    let mut rows = vec![];
+    for req in ws.store.current_reqs()? {
+        let mut docs: Vec<String> = req.anchors.iter().map(|a| a.doc.clone()).collect();
+        docs.sort();
+        docs.dedup();
+        let open_questions = qsts
+            .iter()
+            .filter(|q| {
+                q.status == QstStatus::Open && q.affects.iter().any(|a| a.slug == req.id.slug)
+            })
+            .count();
+        rows.push(InventoryRow {
+            groups: groups.get(&req.id.key()).cloned().unwrap_or_default(),
+            docs,
+            open_questions,
+            req,
+        });
+    }
+    rows.sort_by(|a, b| a.req.id.slug.cmp(&b.req.id.slug));
+    Ok(rows)
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    #[test]
+    fn groups_roundtrip() {
+        let (_tmp, ws) = tests::fixture();
+        let ctx = ws.default_context().unwrap();
+        let view = doc_view(&ws, &ctx, "docs/hld.md").unwrap();
+        let li = view
+            .snapshot
+            .spans
+            .iter()
+            .find(|s| s.block == crate::segment::Block::Li)
+            .unwrap()
+            .id
+            .clone();
+        create_req(
+            &ws,
+            &ctx,
+            "docs/hld.md",
+            &[li],
+            NewReq {
+                statement: "The email address shall match RFC 5322.",
+                slug: Some("email-format"),
+                pattern: None,
+                rating: None,
+                owner: None,
+            },
+            "cj",
+        )
+        .unwrap();
+        let g = create_group(&ws, "Validation", Some("input rules"), "cj").unwrap();
+        assert_eq!(g.id.to_string(), "grp~validation~1");
+        let g2 = create_group(&ws, "Validation", None, "cj").unwrap();
+        assert_eq!(g2.id.slug, "validation-2");
+        assign_group(&ws, "validation", &["email-format".into()], "cj").unwrap();
+        assign_group(&ws, "validation", &["email-format".into()], "cj").unwrap(); // idempotent
+        let r = group_rollups(&ws).unwrap();
+        let v = r.iter().find(|x| x.group.id.slug == "validation").unwrap();
+        assert_eq!(v.members_by_status["extracted"], 1);
+        assert!(v.findings.is_empty());
+        let inv = inventory(&ws).unwrap();
+        assert_eq!(inv[0].groups, vec!["Validation"]);
+        assert_eq!(inv[0].docs, vec!["docs/hld.md"]);
+        // retire → finding
+        update_req(
+            &ws,
+            "email-format",
+            ReqPatch {
+                statement: None,
+                pattern: None,
+                status: Some(Status::Retired),
+                rating: None,
+                owner: None,
+                reason: Some("x"),
+            },
+            "cj",
+        )
+        .unwrap();
+        let r = group_rollups(&ws).unwrap();
+        assert_eq!(
+            r.iter()
+                .find(|x| x.group.id.slug == "validation")
+                .unwrap()
+                .findings[0]
+                .kind,
+            "retired"
+        );
+        unassign_group(&ws, "validation", &["email-format".into()], "cj").unwrap();
+        assert!(ws.store.grp_revs("validation").unwrap()[0]
+            .members
+            .is_empty());
+        assert!(assign_group(&ws, "validation", &["nope".into()], "cj").is_err());
+    }
+}
