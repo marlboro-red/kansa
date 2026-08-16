@@ -1,9 +1,80 @@
-//! GitHub repo access via libgit2 (`ui~repo-register~1`, `ui~windows-git~1`): clone, fetch,
-//! read blobs at a ref, list markdown docs. No system `git` binary required.
+//! GitHub repo access (`ui~repo-register~1`, `ui~gh-primary~1`).
+//!
+//! Network operations go through the GitHub CLI: `gh` handles auth (`gh auth setup-git`),
+//! repo metadata (`gh repo view`, `gh pr list`) and the system `git` it fronts does fetches.
+//! libgit2 is used for *local* reads (blobs, trees) and as a network fallback when `gh` is
+//! not installed. Clones are bare: kansa never checks out or edits the PM's HLD.
 
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{Cred, FetchOptions, RemoteCallbacks, Repository};
 use std::path::Path;
+use std::process::Command;
+use std::sync::OnceLock;
+
+const REFSPECS: [&str; 2] = [
+    "+refs/heads/*:refs/remotes/origin/*",
+    "+refs/pull/*/head:refs/pull/*/head",
+];
+
+/// Is `gh` installed and authenticated? Cached per process.
+pub fn gh_available() -> bool {
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        if std::env::var("KANSA_NO_GH").is_ok() {
+            return false;
+        }
+        Command::new("gh")
+            .args(["auth", "status"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    })
+}
+
+/// Run `gh <args>` and return stdout; error carries stderr.
+pub fn gh(args: &[&str]) -> Result<String> {
+    let out = Command::new("gh")
+        .args(args)
+        .output()
+        .with_context(|| format!("running gh {}", args.join(" ")))?;
+    if !out.status.success() {
+        bail!(
+            "gh {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Run `git -C <dir> <args>` (system git, credentials via `gh auth setup-git`).
+fn git(dir: &Path, args: &[&str]) -> Result<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .with_context(|| format!("running git {}", args.join(" ")))?;
+    if !out.status.success() {
+        bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Make sure git can authenticate to github.com through gh (idempotent, best-effort).
+fn ensure_gh_git_auth() {
+    static DONE: OnceLock<()> = OnceLock::new();
+    DONE.get_or_init(|| {
+        let _ = Command::new("gh")
+            .args(["auth", "setup-git", "--hostname", "github.com"])
+            .output();
+    });
+}
 
 /// Resolve a GitHub token: `$GITHUB_TOKEN`, `$GH_TOKEN`, else `gh auth token` if `gh` is installed.
 pub fn github_token() -> Option<String> {
@@ -90,8 +161,7 @@ pub fn github_slug(github: &str) -> Result<String> {
     Ok(s.to_string())
 }
 
-/// Clone (or open, if already present) a bare mirror-ish clone at `dest`.
-/// We keep a *bare* repo: kansa only reads blobs, never checks out (`the tool never edits the PM's HLD`).
+/// Clone (or open, if already present) a bare clone at `dest` with branch + PR-head refspecs.
 pub fn clone_or_open(url: &str, dest: &Path) -> Result<Repository> {
     if dest.join("HEAD").exists() {
         return Repository::open_bare(dest).with_context(|| format!("opening {}", dest.display()));
@@ -100,16 +170,17 @@ pub fn clone_or_open(url: &str, dest: &Path) -> Result<Repository> {
     let repo = Repository::init_bare(dest)?;
     {
         let mut remote = repo.remote("origin", url)?;
-        remote
-            .fetch(
-                &[
-                    "+refs/heads/*:refs/remotes/origin/*",
-                    "+refs/pull/*/head:refs/pull/*/head",
-                ],
-                Some(&mut fetch_opts(github_token())),
-                None,
-            )
-            .with_context(|| format!("cloning {url}"))?;
+        // `remote()` already adds the heads refspec; add PR heads too.
+        repo.remote_add_fetch("origin", REFSPECS[1])?;
+        if use_gh_for(url) {
+            ensure_gh_git_auth();
+            git(dest, &["fetch", "--no-tags", "origin"])
+                .with_context(|| format!("cloning {url} via gh/git"))?;
+        } else {
+            remote
+                .fetch(&REFSPECS, Some(&mut fetch_opts(github_token())), None)
+                .with_context(|| format!("cloning {url}"))?;
+        }
     }
     Ok(repo)
 }
@@ -117,21 +188,55 @@ pub fn clone_or_open(url: &str, dest: &Path) -> Result<Repository> {
 /// Fetch branches and PR heads from origin.
 pub fn fetch(repo: &Repository) -> Result<()> {
     let mut remote = repo.find_remote("origin")?;
-    remote
-        .fetch(
-            &[
-                "+refs/heads/*:refs/remotes/origin/*",
-                "+refs/pull/*/head:refs/pull/*/head",
-            ],
-            Some(&mut fetch_opts(github_token())),
-            None,
-        )
-        .context("fetching origin")?;
+    let url = remote.url().unwrap_or_default().to_string();
+    if use_gh_for(&url) {
+        ensure_gh_git_auth();
+        git(repo.path(), &["fetch", "--no-tags", "origin"])
+            .context("fetching origin via gh/git")?;
+    } else {
+        remote
+            .fetch(&REFSPECS, Some(&mut fetch_opts(github_token())), None)
+            .context("fetching origin")?;
+    }
     Ok(())
 }
 
-/// Default branch name (from `refs/remotes/origin/HEAD` if present, else main/master heuristics).
+/// gh/git path is used for github.com URLs when gh is available; local `file://` and other
+/// hosts go through libgit2.
+fn use_gh_for(url: &str) -> bool {
+    url.contains("github.com") && gh_available()
+}
+
+/// `owner/name` for a github URL, if it is one.
+pub fn slug_of_url(url: &str) -> Option<String> {
+    github_slug(url).ok().filter(|_| url.contains("github.com"))
+}
+
+/// Default branch name: `gh repo view` when available, else `refs/remotes/origin/HEAD`, else
+/// ask the remote, else main/master heuristics.
 pub fn default_branch(repo: &Repository) -> Result<String> {
+    if let Some(slug) = repo
+        .find_remote("origin")
+        .ok()
+        .and_then(|r| r.url().and_then(slug_of_url))
+    {
+        if gh_available() {
+            if let Ok(out) = gh(&[
+                "repo",
+                "view",
+                &slug,
+                "--json",
+                "defaultBranchRef",
+                "-q",
+                ".defaultBranchRef.name",
+            ]) {
+                let b = out.trim();
+                if !b.is_empty() {
+                    return Ok(b.to_string());
+                }
+            }
+        }
+    }
     if let Ok(r) = repo.find_reference("refs/remotes/origin/HEAD") {
         if let Some(t) = r.symbolic_target() {
             return Ok(t.trim_start_matches("refs/remotes/origin/").to_string());
@@ -234,6 +339,46 @@ pub fn list_markdown(repo: &Repository, refname: &str) -> Result<Vec<String>> {
 /// Head sha of a ref.
 pub fn head_sha(repo: &Repository, refname: &str) -> Result<String> {
     Ok(resolve_commit(repo, refname)?.id().to_string())
+}
+
+/// Open PR metadata via `gh pr list` (`ui~pr-view~1`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PrInfo {
+    pub number: u64,
+    pub title: String,
+    #[serde(rename = "headRefOid")]
+    pub head: String,
+    #[serde(rename = "headRefName")]
+    pub head_ref: String,
+    #[serde(rename = "baseRefName")]
+    pub base_ref: String,
+    #[serde(default)]
+    pub author: serde_json::Value,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+    #[serde(rename = "isDraft", default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub files: Vec<serde_json::Value>,
+}
+
+pub fn list_prs(slug: &str) -> Result<Vec<PrInfo>> {
+    if !gh_available() {
+        bail!("listing PRs requires the GitHub CLI (`gh`) — install it and run `gh auth login`");
+    }
+    let out = gh(&[
+        "pr",
+        "list",
+        "--repo",
+        slug,
+        "--state",
+        "open",
+        "--limit",
+        "100",
+        "--json",
+        "number,title,headRefOid,headRefName,baseRefName,author,updatedAt,isDraft,files",
+    ])?;
+    serde_json::from_str(&out).context("parsing gh pr list output")
 }
 
 /// PR numbers we have heads for (from a fetch).

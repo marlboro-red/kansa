@@ -102,6 +102,12 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ReqCmd,
     },
+    /// Dev bridge: serve the app's command surface over HTTP so the frontend can run in a
+    /// browser (same core ops as the Tauri app). Binds 127.0.0.1 only.
+    Serve {
+        #[arg(long, default_value_t = 1430)]
+        port: u16,
+    },
 }
 
 #[derive(Subcommand)]
@@ -275,10 +281,63 @@ fn out<T: serde::Serialize>(json: bool, v: &T, human: impl FnOnce(&T) -> String)
     Ok(())
 }
 
+fn serve(port: u16) -> Result<()> {
+    let server = tiny_http::Server::http(("127.0.0.1", port))
+        .map_err(|e| anyhow!("bind 127.0.0.1:{port}: {e}"))?;
+    eprintln!("kansa dev bridge on http://127.0.0.1:{port}/api/<command>  (POST JSON args)");
+    fn respond(req: tiny_http::Request, code: u16, body: String) {
+        let mut r = tiny_http::Response::from_string(body).with_status_code(code);
+        for (k, v) in [
+            ("Access-Control-Allow-Origin", "*"),
+            ("Access-Control-Allow-Headers", "content-type"),
+            ("Access-Control-Allow-Methods", "POST, GET, OPTIONS"),
+            ("Content-Type", "application/json"),
+        ] {
+            r.add_header(tiny_http::Header::from_bytes(k, v).unwrap());
+        }
+        let _ = req.respond(r);
+    }
+    for mut req in server.incoming_requests() {
+        let url = req.url().to_string();
+        if *req.method() == tiny_http::Method::Options {
+            respond(req, 204, String::new());
+            continue;
+        }
+        if url == "/api" || url == "/api/" {
+            respond(req, 200, serde_json::to_string(kansa_core::api::COMMANDS)?);
+            continue;
+        }
+        let Some(name) = url
+            .strip_prefix("/api/")
+            .map(|n| n.trim_end_matches('/').to_string())
+        else {
+            respond(req, 404, "{\"error\":\"not found\"}".into());
+            continue;
+        };
+        let mut body = String::new();
+        let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
+        let args: serde_json::Value = if body.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str(&body).unwrap_or(serde_json::json!({}))
+        };
+        match kansa_core::api::call(&name, &args) {
+            Ok(v) => respond(req, 200, serde_json::to_string(&v)?),
+            Err(e) => respond(
+                req,
+                400,
+                serde_json::to_string(&serde_json::json!({"error": format!("{e:#}")}))?,
+            ),
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let json = cli.json;
     match cli.cmd {
+        Cmd::Serve { port } => serve(port),
         Cmd::Repo { cmd } => match cmd {
             RepoCmd::Add { github } => {
                 let ws = ops::register_repo(&github)?;

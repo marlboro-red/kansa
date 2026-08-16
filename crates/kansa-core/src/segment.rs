@@ -373,10 +373,7 @@ pub fn split_sentences(text: &str) -> Vec<(usize, usize)> {
                                     | '—'
                                     | '–'
                             );
-                        starts_like_sentence && c != '.'
-                            || (c == '.'
-                                && starts_like_sentence
-                                && !is_abbreviation(&text[start..=i]))
+                        starts_like_sentence && (c != '.' || !is_abbreviation(&text[start..=i]))
                     }
                 };
                 if boundary {

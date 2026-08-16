@@ -132,7 +132,7 @@ summary: {created: [...], changed: [...], retired: [...], verdicts: {...}}   # f
 
 HLDs live as markdown in GitHub repos. The app registers repos, not loose files.
 
-- `ui~repo-register~1` — The user shall register a GitHub repo (owner/name, via `gh` auth or a token); the app shall clone/fetch it locally and keep kansa state for that repo in a local state store keyed by the repo, never written into the repo itself.
+- `ui~repo-register~1` — The user shall register a GitHub repo (owner/name, authenticated through `gh`); the app shall clone/fetch it locally and keep kansa state for that repo in a local state store keyed by the repo, never written into the repo itself.
 - `ui~repo-docs~1` — For a registered repo the app shall list its markdown docs on the default branch and let the user pick which are HLDs (tracked docs); untracked docs are ignored by classification and oversight.
 - `ui~pr-view~1` — The app shall list open PRs on a registered repo and open a PR's version of a tracked doc: rendered markdown with spans, side-by-side or inline diff against the base branch, and the reconciliation verdicts (§4.4) computed against the base classification. Classifying against a PR head is allowed; the round is tagged with the PR number and head SHA.
 - `ui~repo-refresh~1` — Fetching is explicit (button / `R`), never on a timer; a fetch that changes a tracked doc opens the reconciliation flow.
@@ -210,7 +210,7 @@ Deferred: PM-facing read-only mode, multi-user, in-app HLD editing (never — `t
 
 - `ui~platforms~1` — The app and CLI shall run on macOS, Windows, and Linux from one codebase; CI shall build and run core tests on all three from UM0.
 - `ui~windows-paths~1` — Store paths, doc keys, and anchors shall be platform-neutral: forward-slash doc paths as stored in git, store root under the OS config dir (`dirs`), no case-sensitivity assumptions in slugs/doc keys, and atomic rename done with a Windows-safe strategy (retry on sharing violation).
-- `ui~windows-git~1` — Repo clone/fetch shall not depend on a system `git` binary being on `PATH` (use `gix`/`git2` in core); `gh` is optional for auth, with a token fallback.
+- `ui~gh-primary~1` — The GitHub CLI (`gh`) is the primary path for everything that talks to GitHub: auth (`gh auth setup-git`), repo metadata (`gh repo view`), PR listing (`gh pr list`), and fetches via the `git` it fronts. Local reads (blobs, trees) use libgit2 and never touch the network. If `gh` is absent, clone/fetch fall back to libgit2 with `$GITHUB_TOKEN`; PR features require `gh` and say so.
 
 ## 6. Risks specific to the app
 

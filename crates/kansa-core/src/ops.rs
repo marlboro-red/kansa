@@ -555,7 +555,7 @@ pub fn flag_question(
         affects_revs,
         history: vec![History::new(by, "raise")],
     };
-    ws.store.save_qst_revs(&slug, &[q.clone()])?;
+    ws.store.save_qst_revs(&slug, std::slice::from_ref(&q))?;
     // link back from affected reqs
     for a in &new.affects {
         let mut revs = ws.store.req_revs(&a.slug)?;

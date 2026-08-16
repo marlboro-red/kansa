@@ -1,0 +1,81 @@
+:root {
+  --bg: #15171c;
+  --bg-2: #1c1f26;
+  --bg-3: #242833;
+  --fg: #e6e6e3;
+  --fg-muted: #8b909c;
+  --line: #2c3140;
+  --accent: #e8a030;
+  --loud: #f0605a;
+  --ok: #6fbf73;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f6f2;
+    --bg-2: #ffffff;
+    --bg-3: #eeece6;
+    --fg: #1d1f24;
+    --fg-muted: #6b6f7a;
+    --line: #dcd9d1;
+  }
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); }
+button, input { font: inherit; color: inherit; }
+button {
+  background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 12px; cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+input[type=text], input:not([type]) {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%;
+}
+input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); margin: 24px 0 8px; }
+.muted { color: var(--fg-muted); }
+.loud { color: var(--loud); font-weight: 600; }
+.mono { font-family: var(--mono); font-size: 13px; }
+
+.shell { display: grid; grid-template-columns: 280px 1fr; height: 100%; }
+.sidebar { background: var(--bg-2); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 16px 16px 12px; font-weight: 700; letter-spacing: .02em; }
+.brand .mark { width: 14px; height: 14px; background: var(--accent); border-radius: 3px; }
+.repo-add { display: flex; gap: 6px; padding: 0 12px 12px; }
+.repos { flex: 1; overflow: auto; padding: 0 8px; }
+.repo {
+  display: flex; flex-direction: column; align-items: flex-start; width: 100%; text-align: left;
+  background: transparent; border: 1px solid transparent; padding: 8px 10px; margin-bottom: 2px;
+}
+.repo:hover { background: var(--bg-3); }
+.repo.active { background: var(--bg-3); border-color: var(--line); }
+.repo .name { font-weight: 600; }
+.repo .meta { font-size: 12px; color: var(--fg-muted); }
+.status-line { padding: 10px 16px; border-top: 1px solid var(--line); font-size: 12px; display: flex; gap: 8px; align-items: center; }
+.spinner { width: 10px; height: 10px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.content { overflow: auto; position: relative; }
+.empty { max-width: 520px; margin: 18vh auto; padding: 0 24px; }
+.repo-pane { padding: 24px 32px; max-width: 1100px; }
+.pane-head { display: flex; justify-content: space-between; align-items: flex-start; }
+.pane-head p { margin: 0; font-size: 12px; }
+
+table.docs { width: 100%; border-collapse: collapse; }
+table.docs th { text-align: left; font-weight: 500; color: var(--fg-muted); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+table.docs td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.meter { display: inline-flex; align-items: center; gap: 8px; }
+.meter .bar { width: 120px; height: 6px; background: var(--bg-3); border-radius: 3px; overflow: hidden; }
+.meter .bar span { display: block; height: 100%; background: var(--ok); }
+.rollup { font-size: 12px; margin-top: 8px; }
+
+.doclist { list-style: none; padding: 0; margin: 0; }
+.doclist li { padding: 4px 0; }
+.doclist label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+
+.toast { position: sticky; top: 12px; margin: 12px 32px 0; padding: 10px 14px; border-radius: 6px; z-index: 5; cursor: pointer; }
+.toast.error { background: #3a1e20; color: #ffb4b0; border: 1px solid #6a2c2f; white-space: pre-wrap; font-family: var(--mono); font-size: 12px; }
