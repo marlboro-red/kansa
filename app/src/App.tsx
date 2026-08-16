@@ -252,6 +252,12 @@ const RepoPane: Component<{
   const [prErr, setPrErr] = createSignal("");
   const [prs, { refetch: refetchPrs }] = createResource(() => p.github, (g) => api.listPrs(g).catch((e) => { setPrErr(String(e)); return [] as PrSummary[]; }));
   const [reconDocs, setReconDocs] = createSignal<string[]>([]);
+  const [pick, setPick] = createSignal("");
+  const [pickOpen, setPickOpen] = createSignal(false);
+  const pickList = () => {
+    const q = pick().trim().toLowerCase();
+    return (docs() ?? []).filter((d) => !d.tracked && (!q || d.path.toLowerCase().includes(q))).slice(0, 12);
+  };
   const [prQuery, setPrQuery] = createSignal("");
   const [prOnlyTracked, setPrOnlyTracked] = createSignal(false);
   const [prHideDrafts, setPrHideDrafts] = createSignal(false);
@@ -297,13 +303,24 @@ const RepoPane: Component<{
       </header>
 
       <section>
-        <h2>Tracked HLDs</h2>
+        <div style={{ display: "flex", "align-items": "baseline", gap: "12px" }}>
+          <h2>Tracked HLDs</h2>
+          <span style={{ flex: 1 }} />
+          <div class="trackpick">
+            <input placeholder="Track a doc… (search markdown files)" value={pick()} onInput={(e) => setPick(e.currentTarget.value)} onFocus={() => setPickOpen(true)} onBlur={() => setTimeout(() => setPickOpen(false), 150)} onKeyDown={(e) => { if (e.key === "Escape") setPickOpen(false); if (e.key === "Enter" && pickList()[0]) toggle(pickList()[0].path, false); }} />
+            <Show when={pickOpen() && pickList().length}>
+              <div class="matches pickmenu">
+                <For each={pickList()}>{(d) => <div class="match" onMouseDown={() => { toggle(d.path, false); setPick(""); }}><span class="mono">{d.path}</span></div>}</For>
+              </div>
+            </Show>
+          </div>
+        </div>
         <Show when={status()} fallback={<p class="muted">loading…</p>}>
           {(s) => (
             <table class="docs">
-              <thead><tr><th>Doc</th><th>Coverage</th><th>Residue</th><th>Questions</th><th>Round</th></tr></thead>
+              <thead><tr><th>Doc</th><th>Coverage</th><th>Residue</th><th>Questions</th><th>Round</th><th></th></tr></thead>
               <tbody>
-                <For each={s().docs} fallback={<tr><td colSpan={5} class="muted">Nothing tracked yet — pick docs below, then open one to classify.</td></tr>}>
+                <For each={s().docs} fallback={<tr><td colSpan={6} class="muted">Nothing tracked yet — use “Track a doc…” to pick an HLD, then open it to classify.</td></tr>}>
                   {(d) => (
                     <tr class="clickable" onClick={() => p.onOpenDoc(d.doc)}>
                       <td class="mono">{d.doc}</td>
@@ -320,6 +337,7 @@ const RepoPane: Component<{
                       <td classList={{ loud: (d.meter?.residue ?? 0) > 0 }}>{d.meter?.residue ?? "—"}</td>
                       <td>{d.meter?.open_questions ?? "—"}</td>
                       <td>{d.open_round ? `#${d.open_round} open` : `${d.rounds_closed} closed`}</td>
+                      <td class="c-untrack" onClick={(e) => e.stopPropagation()}><button class="ghost" title="Stop tracking (keeps existing requirements)" onClick={() => toggle(d.doc, true)}>untrack</button></td>
                     </tr>
                   )}
                 </For>
@@ -368,23 +386,6 @@ const RepoPane: Component<{
         </Show>
       </section>
 
-      <section>
-        <h2>Markdown docs on {p.repo?.default_branch}</h2>
-        <Show when={docs()} fallback={<p class="muted">loading…</p>}>
-          <ul class="doclist">
-            <For each={docs()}>
-              {(d) => (
-                <li>
-                  <label>
-                    <input type="checkbox" checked={d.tracked} onChange={() => toggle(d.path, d.tracked)} />
-                    <span class="mono">{d.path}</span>
-                  </label>
-                </li>
-              )}
-            </For>
-          </ul>
-        </Show>
-      </section>
     </div>
   );
 };
