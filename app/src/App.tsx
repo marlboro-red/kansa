@@ -43,7 +43,7 @@ const App: Component = () => {
   return (
     <div class="shell">
       <aside class="sidebar">
-        <header class="brand"><span class="mark" /><span>kansa</span></header>
+        <header class="brand"><span class="logo" /><span>kansa</span></header>
         <RepoAdd
           disabled={busy() !== null}
           onAdd={async (gh) => {
