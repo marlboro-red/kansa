@@ -122,8 +122,8 @@ kbd {
 .repo:hover { background: var(--panel-2); border-color: transparent; }
 .repo.active { background: var(--panel-2); border-color: var(--line); }
 .repo { min-width: 0; }
-.repo .name { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-.repo .name > bdi { direction: ltr; unicode-bidi: isolate; }
+.repo .name { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo .name .owner { color: var(--ink-3); font-weight: 500; }
 .repo .meta { font-size: 11.5px; color: var(--ink-3); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pane-head h1, .invview-head h1 { overflow-wrap: anywhere; }
 .topbar .crumb { overflow: hidden; }

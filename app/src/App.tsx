@@ -58,7 +58,7 @@ const App: Component = () => {
               {(r) => (
                 <>
                   <button class="repo" classList={{ active: currentGithub() === r.github && !currentDoc() }} onClick={() => setRoute({ kind: "repo", github: r.github })}>
-                    <span class="name" title={r.github}><bdi>{r.github}</bdi></span>
+                    <span class="name" title={r.github}><span class="owner">{r.github.split("/")[0]}/</span>{r.github.split("/").slice(1).join("/")}</span>
                     <span class="meta">{r.default_branch} · {r.tracked.length} tracked</span>
                   </button>
                   <Show when={currentGithub() === r.github}>
