@@ -121,8 +121,13 @@ kbd {
 }
 .repo:hover { background: var(--panel-2); border-color: transparent; }
 .repo.active { background: var(--panel-2); border-color: var(--line); }
-.repo .name { font-weight: 600; }
-.repo .meta { font-size: 11.5px; color: var(--ink-3); }
+.repo { min-width: 0; }
+.repo .name { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.repo .name > bdi { direction: ltr; unicode-bidi: isolate; }
+.repo .meta { font-size: 11.5px; color: var(--ink-3); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane-head h1, .invview-head h1 { overflow-wrap: anywhere; }
+.topbar .crumb { overflow: hidden; }
+.topbar .crumb > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .docnav { padding: 2px 0 6px 18px; display: flex; flex-direction: column; gap: 1px; }
 .docnav button {
   background: transparent; border: 0; text-align: left; padding: 4px 8px; border-radius: 4px;
@@ -492,3 +497,6 @@ table.inv-table input[type="checkbox"] { accent-color: var(--amber); }
 .prfiles li { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); }
 .prfiles li.changed { border-color: var(--violet); }
 .prfiles .path { font-size: 12.5px; }
+.prfilters { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.prfilters input:not([type]) { width: 320px; }
+.prfilters label { display: flex; gap: 6px; align-items: center; cursor: pointer; }

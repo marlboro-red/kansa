@@ -58,7 +58,7 @@ const App: Component = () => {
               {(r) => (
                 <>
                   <button class="repo" classList={{ active: currentGithub() === r.github && !currentDoc() }} onClick={() => setRoute({ kind: "repo", github: r.github })}>
-                    <span class="name">{r.github}</span>
+                    <span class="name" title={r.github}><bdi>{r.github}</bdi></span>
                     <span class="meta">{r.default_branch} · {r.tracked.length} tracked</span>
                   </button>
                   <Show when={currentGithub() === r.github}>
@@ -252,6 +252,17 @@ const RepoPane: Component<{
   const [prErr, setPrErr] = createSignal("");
   const [prs, { refetch: refetchPrs }] = createResource(() => p.github, (g) => api.listPrs(g).catch((e) => { setPrErr(String(e)); return [] as PrSummary[]; }));
   const [reconDocs, setReconDocs] = createSignal<string[]>([]);
+  const [prQuery, setPrQuery] = createSignal("");
+  const [prOnlyTracked, setPrOnlyTracked] = createSignal(false);
+  const [prHideDrafts, setPrHideDrafts] = createSignal(false);
+  const prsFiltered = () => {
+    const q = prQuery().trim().toLowerCase();
+    return (prs() ?? [])
+      .filter((pr) => !prOnlyTracked() || pr.touches.length)
+      .filter((pr) => !prHideDrafts() || !pr.draft)
+      .filter((pr) => !q || `#${pr.number} ${pr.title} ${pr.author} ${pr.head_ref} ${pr.files.join(" ")}`.toLowerCase().includes(q))
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  };
 
   async function toggle(path: string, tracked: boolean) {
     await p.run<unknown>(tracked ? `untracking ${path}` : `snapshotting ${path}`, () =>
@@ -327,11 +338,18 @@ const RepoPane: Component<{
       </section>
 
       <section>
-        <h2>Open pull requests</h2>
+        <h2>Open pull requests <span class="muted" style={{ "text-transform": "none", "letter-spacing": 0 }}>{prs() ? `${prsFiltered().length}/${prs()!.length}` : ""}</span></h2>
+        <Show when={(prs() ?? []).length}>
+          <div class="prfilters">
+            <input placeholder="Search PRs — number, title, author, branch, file…" value={prQuery()} onInput={(e) => setPrQuery(e.currentTarget.value)} />
+            <label class="small muted"><input type="checkbox" checked={prOnlyTracked()} onChange={(e) => setPrOnlyTracked(e.currentTarget.checked)} /> touches tracked docs</label>
+            <label class="small muted"><input type="checkbox" checked={prHideDrafts()} onChange={(e) => setPrHideDrafts(e.currentTarget.checked)} /> hide drafts</label>
+          </div>
+        </Show>
         <Show when={prs()} fallback={<p class="muted">loading…</p>}>
           <Show when={(prs() ?? []).length} fallback={<p class="muted" style={{ "font-size": "12px" }}>{prErr() || "No open pull requests."}</p>}>
             <ul class="prlist">
-              <For each={prs()}>
+              <For each={prsFiltered()} fallback={<li class="muted" style={{ "font-size": "12px" }}>No pull requests match.</li>}>
                 {(pr) => (
                   <li class="clickable" onClick={() => p.onOpenPr(pr)}>
                     <div class="row1">
