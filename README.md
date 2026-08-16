@@ -27,7 +27,7 @@ Deferred: virtualization for >5k-sentence docs, PM read-only mode, multi-user, p
 ## Run
 
 ```sh
-# prerequisites: rust stable, node 22, gh (logged in), optionally reqtrace + claude on PATH
+# prerequisites: rust stable, node 22, GitHub CLI `gh` logged in (required), optionally reqtrace + claude on PATH
 cargo test                                   # core + cli (34 tests)
 cd app && npm install && npm run tauri dev   # desktop app
 ```
@@ -61,8 +61,7 @@ kansa repo refresh -r owner/name             # fetch; changed docs go to reconci
 |---|---|
 | `KANSA_HOME` | state root (default: OS config dir `/kansa`); repos under `repos/`, bare clones under `clones/` |
 | `KANSA_USER` | attribution in history (default `$USER`) |
-| `GITHUB_TOKEN` / `GH_TOKEN` | used only if `gh` is not installed |
-| `KANSA_NO_GH` | force the libgit2 fallback (CI) |
+| `KANSA_NO_GH` | pretend `gh` is absent (CI; only `file://` repos work then) |
 | `KANSA_AGENT_MODEL` | model for `claude -p` |
 | `KANSA_AGENT_CMD` | replace `claude -p` with any command reading the prompt on stdin and printing the JSON array |
 | `REQTRACE_BIN` | reqtrace binary for post-export validate (else searched on PATH) |

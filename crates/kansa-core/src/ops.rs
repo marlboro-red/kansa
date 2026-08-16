@@ -1041,22 +1041,43 @@ pub struct PrDoc {
     pub tracked: bool,
 }
 
-/// Markdown files changed by a PR (diff vs merge-base with the base branch, from the fetched
-/// refs — works without `gh`), flagged tracked.
+/// Markdown files changed by a PR. GitHub is the source of truth (`gh pr view --json files`);
+/// the local diff vs merge-base supplies add/modify/delete status. Non-GitHub (`file://`)
+/// repos use the local diff alone.
 pub fn pr_docs(ws: &Workspace, pr: u64) -> Result<Vec<PrDoc>> {
     let cfg = ws.store.repo()?;
     let _ = repo::fetch(&ws.git);
-    let changed = repo::changed_markdown(
+    let local = repo::changed_markdown(
         &ws.git,
         &repo::branch_ref(&cfg.default_branch),
         &repo::pr_ref(pr),
-    )?;
-    Ok(changed
+    )
+    .unwrap_or_default();
+    let status_of: std::collections::HashMap<&str, &str> = local
+        .iter()
+        .map(|(p, s)| (p.as_str(), s.as_str()))
+        .collect();
+    let is_md = |f: &str| {
+        let l = f.to_ascii_lowercase();
+        l.ends_with(".md") || l.ends_with(".markdown")
+    };
+    let paths: Vec<String> = if cfg.remote.contains("github.com") {
+        repo::pr_changed_files(&cfg.github, pr)?
+            .into_iter()
+            .filter(|f| is_md(f))
+            .collect()
+    } else {
+        local.iter().map(|(p, _)| p.clone()).collect()
+    };
+    Ok(paths
         .into_iter()
-        .map(|(path, status)| PrDoc {
+        .map(|path| PrDoc {
             tracked: cfg.tracked.iter().any(|t| t.path == path),
+            status: status_of
+                .get(path.as_str())
+                .unwrap_or(&"changed")
+                .to_string(),
             path,
-            status,
         })
         .collect())
 }

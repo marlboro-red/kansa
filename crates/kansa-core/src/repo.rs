@@ -1,9 +1,10 @@
-//! GitHub repo access (`ui~repo-register~1`, `ui~gh-primary~1`).
+//! GitHub repo access (`ui~repo-register~1`, `ui~gh-required~1`).
 //!
-//! Network operations go through the GitHub CLI: `gh` handles auth (`gh auth setup-git`),
-//! repo metadata (`gh repo view`, `gh pr list`) and the system `git` it fronts does fetches.
-//! libgit2 is used for *local* reads (blobs, trees) and as a network fallback when `gh` is
-//! not installed. Clones are bare: kansa never checks out or edits the PM's HLD.
+//! The GitHub CLI is a hard requirement for github.com repos: `gh` handles auth
+//! (`gh auth setup-git`), repo metadata (`gh repo view`), PRs (`gh pr list`, `gh pr view`),
+//! and the system `git` it fronts does fetches. libgit2 is used only for *local* reads
+//! (blobs, trees, diffs) and for non-GitHub URLs such as `file://` test repos.
+//! Clones are bare: kansa never checks out or edits the PM's HLD.
 
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{Cred, FetchOptions, RemoteCallbacks, Repository};
@@ -29,6 +30,23 @@ pub fn gh_available() -> bool {
             .map(|o| o.status.success())
             .unwrap_or(false)
     })
+}
+
+/// Fail with an actionable message when the GitHub CLI is missing or logged out.
+pub fn require_gh() -> Result<()> {
+    if gh_available() {
+        return Ok(());
+    }
+    let installed = Command::new("gh")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if installed {
+        bail!("GitHub CLI is not logged in — run `gh auth login` and try again")
+    } else {
+        bail!("kansa needs the GitHub CLI: install `gh` (https://cli.github.com) and run `gh auth login`")
+    }
 }
 
 /// Run `gh <args>` and return stdout; error carries stderr.
@@ -76,41 +94,9 @@ fn ensure_gh_git_auth() {
     });
 }
 
-/// Resolve a GitHub token: `$GITHUB_TOKEN`, `$GH_TOKEN`, else `gh auth token` if `gh` is installed.
-pub fn github_token() -> Option<String> {
-    for k in ["GITHUB_TOKEN", "GH_TOKEN"] {
-        if let Ok(t) = std::env::var(k) {
-            if !t.trim().is_empty() {
-                return Some(t.trim().to_string());
-            }
-        }
-    }
-    let out = std::process::Command::new("gh")
-        .args(["auth", "token"])
-        .output()
-        .ok()?;
-    if out.status.success() {
-        let t = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !t.is_empty() {
-            return Some(t);
-        }
-    }
-    None
-}
-
-fn callbacks<'a>(token: Option<String>) -> RemoteCallbacks<'a> {
+fn callbacks<'a>() -> RemoteCallbacks<'a> {
     let mut cb = RemoteCallbacks::new();
-    cb.credentials(move |url, username, allowed| {
-        if allowed.is_user_pass_plaintext() {
-            if let Some(t) = &token {
-                return Cred::userpass_plaintext("x-access-token", t);
-            }
-            if let Ok(cfg) = git2::Config::open_default() {
-                if let Ok(c) = Cred::credential_helper(&cfg, url, username) {
-                    return Ok(c);
-                }
-            }
-        }
+    cb.credentials(|_url, username, allowed| {
         if allowed.is_ssh_key() {
             if let Some(u) = username {
                 if let Ok(c) = Cred::ssh_key_from_agent(u) {
@@ -122,15 +108,15 @@ fn callbacks<'a>(token: Option<String>) -> RemoteCallbacks<'a> {
             return Cred::default();
         }
         Err(git2::Error::from_str(
-            "no usable credentials (set GITHUB_TOKEN or run `gh auth login`)",
+            "no credentials for non-GitHub remote",
         ))
     });
     cb
 }
 
-fn fetch_opts<'a>(token: Option<String>) -> FetchOptions<'a> {
+fn fetch_opts<'a>() -> FetchOptions<'a> {
     let mut fo = FetchOptions::new();
-    fo.remote_callbacks(callbacks(token));
+    fo.remote_callbacks(callbacks());
     fo.download_tags(git2::AutotagOption::None);
     fo
 }
@@ -172,13 +158,14 @@ pub fn clone_or_open(url: &str, dest: &Path) -> Result<Repository> {
         let mut remote = repo.remote("origin", url)?;
         // `remote()` already adds the heads refspec; add PR heads too.
         repo.remote_add_fetch("origin", REFSPECS[1])?;
-        if use_gh_for(url) {
+        if is_github(url) {
+            require_gh()?;
             ensure_gh_git_auth();
             git(dest, &["fetch", "--no-tags", "origin"])
                 .with_context(|| format!("cloning {url} via gh/git"))?;
         } else {
             remote
-                .fetch(&REFSPECS, Some(&mut fetch_opts(github_token())), None)
+                .fetch(&REFSPECS, Some(&mut fetch_opts()), None)
                 .with_context(|| format!("cloning {url}"))?;
         }
     }
@@ -189,22 +176,22 @@ pub fn clone_or_open(url: &str, dest: &Path) -> Result<Repository> {
 pub fn fetch(repo: &Repository) -> Result<()> {
     let mut remote = repo.find_remote("origin")?;
     let url = remote.url().unwrap_or_default().to_string();
-    if use_gh_for(&url) {
+    if is_github(&url) {
+        require_gh()?;
         ensure_gh_git_auth();
         git(repo.path(), &["fetch", "--no-tags", "origin"])
             .context("fetching origin via gh/git")?;
     } else {
         remote
-            .fetch(&REFSPECS, Some(&mut fetch_opts(github_token())), None)
+            .fetch(&REFSPECS, Some(&mut fetch_opts()), None)
             .context("fetching origin")?;
     }
     Ok(())
 }
 
-/// gh/git path is used for github.com URLs when gh is available; local `file://` and other
-/// hosts go through libgit2.
-fn use_gh_for(url: &str) -> bool {
-    url.contains("github.com") && gh_available()
+/// github.com URLs go through gh/git; local `file://` and other hosts go through libgit2.
+fn is_github(url: &str) -> bool {
+    url.contains("github.com")
 }
 
 /// `owner/name` for a github URL, if it is one.
@@ -245,11 +232,7 @@ pub fn default_branch(repo: &Repository) -> Result<String> {
     // Ask the remote.
     if let Ok(mut remote) = repo.find_remote("origin") {
         if remote
-            .connect_auth(
-                git2::Direction::Fetch,
-                Some(callbacks(github_token())),
-                None,
-            )
+            .connect_auth(git2::Direction::Fetch, Some(callbacks()), None)
             .is_ok()
         {
             if let Ok(buf) = remote.default_branch() {
@@ -375,6 +358,27 @@ pub fn changed_markdown(
     Ok(out)
 }
 
+/// Files changed by a PR according to GitHub (`gh pr view --json files`).
+pub fn pr_changed_files(slug: &str, pr: u64) -> Result<Vec<String>> {
+    require_gh()?;
+    let out = gh(&[
+        "pr",
+        "view",
+        &pr.to_string(),
+        "--repo",
+        slug,
+        "--json",
+        "files",
+        "-q",
+        ".files[].path",
+    ])?;
+    Ok(out
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect())
+}
+
 /// Head sha of a ref.
 pub fn head_sha(repo: &Repository, refname: &str) -> Result<String> {
     Ok(resolve_commit(repo, refname)?.id().to_string())
@@ -402,9 +406,7 @@ pub struct PrInfo {
 }
 
 pub fn list_prs(slug: &str) -> Result<Vec<PrInfo>> {
-    if !gh_available() {
-        bail!("listing PRs requires the GitHub CLI (`gh`) — install it and run `gh auth login`");
-    }
+    require_gh()?;
     let out = gh(&[
         "pr",
         "list",

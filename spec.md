@@ -224,7 +224,7 @@ Deferred: PM-facing read-only mode, multi-user, in-app HLD editing (never — `t
 - `ui~platforms~1` — The app and CLI shall run on macOS, Windows, and Linux from one codebase; CI shall build and run core tests on all three from UM0.
 - `ui~windows-paths~1` — Store paths, doc keys, and anchors shall be platform-neutral: forward-slash doc paths as stored in git, store root under the OS config dir (`dirs`), no case-sensitivity assumptions in slugs/doc keys, and atomic rename done with a Windows-safe strategy (retry on sharing violation).
 - `ui~dev-bridge~1` — `kansa serve` exposes the app's command surface (`kansa_core::api::call`) over local HTTP so the frontend runs in an ordinary browser for development and automated UI testing; the Tauri app and the bridge dispatch through the same table (`ui~core-parity~1`).
-- `ui~gh-primary~1` — The GitHub CLI (`gh`) is the primary path for everything that talks to GitHub: auth (`gh auth setup-git`), repo metadata (`gh repo view`), PR listing (`gh pr list`), and fetches via the `git` it fronts. Local reads (blobs, trees) use libgit2 and never touch the network. If `gh` is absent, clone/fetch fall back to libgit2 with `$GITHUB_TOKEN`; PR features require `gh` and say so.
+- `ui~gh-required~1` — The GitHub CLI (`gh`, logged in) is a hard requirement for GitHub repos: auth (`gh auth setup-git`), repo metadata (`gh repo view`), PRs (`gh pr list`, `gh pr view --json files`), and fetches via the `git` it fronts. Local reads (blobs, trees, diffs) use libgit2 and never touch the network. Without `gh` the app fails fast with install/login instructions; only local `file://` repos (tests) work.
 
 ## 6. Risks specific to the app
 
