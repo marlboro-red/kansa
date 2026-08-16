@@ -87,6 +87,12 @@ pub const COMMANDS: &[&str] = &[
     "list_prs",
     "open_pr",
     "rounds",
+    "prefill_start",
+    "prefill_status",
+    "accept_proposal",
+    "reject_proposal",
+    "accept_all_proposals",
+    "clear_proposals",
 ];
 
 /// Dispatch a command by name with JSON args. Blocking; callers run it off the UI thread.
@@ -415,6 +421,52 @@ pub fn call(name: &str, args: &Value) -> Result<Value> {
             let w = ws(args)?;
             let c = ctx_of(&w, args)?;
             j(w.store.rounds(&c, &arg::<String>(args, "doc")?)?)
+        }
+        "prefill_start" => {
+            let w = ws(args)?;
+            let c = ctx_of(&w, args)?;
+            j(ops::start_prefill(&w, &c, &arg::<String>(args, "doc")?)?)
+        }
+        "prefill_status" => {
+            let w = ws(args)?;
+            let c = ctx_of(&w, args)?;
+            j(ops::prefill_status(&w, &c, &arg::<String>(args, "doc")?)?)
+        }
+        "accept_proposal" => {
+            let w = ws(args)?;
+            let c = ctx_of(&w, args)?;
+            j(ops::accept_proposal(
+                &w,
+                &c,
+                &arg::<String>(args, "doc")?,
+                &arg::<String>(args, "id")?,
+                &by(args),
+            )?)
+        }
+        "reject_proposal" => {
+            let w = ws(args)?;
+            let c = ctx_of(&w, args)?;
+            j(ops::reject_proposal(
+                &w,
+                &c,
+                &arg::<String>(args, "doc")?,
+                &arg::<String>(args, "id")?,
+            )?)
+        }
+        "accept_all_proposals" => {
+            let w = ws(args)?;
+            let c = ctx_of(&w, args)?;
+            j(ops::accept_all_proposals(
+                &w,
+                &c,
+                &arg::<String>(args, "doc")?,
+                &by(args),
+            )?)
+        }
+        "clear_proposals" => {
+            let w = ws(args)?;
+            let c = ctx_of(&w, args)?;
+            j(ops::clear_proposals(&w, &c, &arg::<String>(args, "doc")?)?)
         }
         _ => bail!("unknown command `{name}`"),
     }

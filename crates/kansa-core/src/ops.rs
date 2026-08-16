@@ -1897,3 +1897,368 @@ mod reconcile_tests {
         assert!(w.is_ok());
     }
 }
+
+// ---------- agent pre-fill (`ui~agent-prefill~1`) ----------
+
+use crate::agent::{self, Job, Proposal, ProposalStatus, Proposals, Proposed};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefillStatus {
+    pub available: bool,
+    pub job: Option<Job>,
+    pub proposals: Vec<Proposal>,
+}
+
+/// Start a background pre-fill over the doc's unclassified prose spans. Returns immediately.
+pub fn start_prefill(ws: &Workspace, ctx: &Context, doc: &str) -> Result<Job> {
+    if !agent::agent_available() {
+        bail!(
+            "no agent backend: install Claude Code (`claude`) and log in, or set KANSA_AGENT_CMD"
+        );
+    }
+    if let Some(j) = agent::load_job(&ws.store, ctx, doc)? {
+        if j.state == agent::JobState::Running {
+            bail!("a pre-fill is already running for {doc}");
+        }
+    }
+    let snap = ws
+        .store
+        .current_snapshot(ctx, doc)?
+        .ok_or_else(|| anyhow!("{doc} has no snapshot"))?;
+    let cov = doc_coverage(&ws.store, ctx, &snap)?;
+    let unclassified: Vec<String> = cov
+        .spans
+        .iter()
+        .filter(|(_, st)| st.state == crate::coverage::SpanState::Unclassified && !st.structural)
+        .map(|(id, _)| id.clone())
+        .collect();
+    let existing_reqs: Vec<(String, String)> = ws
+        .store
+        .current_reqs()?
+        .into_iter()
+        .filter(|r| r.status != Status::Retired)
+        .map(|r| (r.id.slug.clone(), r.statement.clone()))
+        .collect();
+    let existing_groups: Vec<String> = ws
+        .store
+        .current_grps()?
+        .into_iter()
+        .map(|g| g.title)
+        .collect();
+    let job = Job {
+        state: agent::JobState::Running,
+        doc: doc.into(),
+        snapshot: snap.sha.clone(),
+        done: 0,
+        total: unclassified.len().div_ceil(agent::BATCH).max(1),
+        error: None,
+        model: agent::agent_model(),
+        started: now(),
+        finished: None,
+    };
+    let store = ws.store.clone();
+    let ctx2 = ctx.clone();
+    std::thread::Builder::new()
+        .name(format!("kansa-prefill-{}", doc_key(doc)))
+        .spawn(move || {
+            agent::run_prefill(
+                store,
+                ctx2,
+                snap,
+                unclassified,
+                existing_reqs,
+                existing_groups,
+            )
+        })
+        .context("spawning pre-fill thread")?;
+    Ok(job)
+}
+
+pub fn prefill_status(ws: &Workspace, ctx: &Context, doc: &str) -> Result<PrefillStatus> {
+    Ok(PrefillStatus {
+        available: agent::agent_available(),
+        job: agent::load_job(&ws.store, ctx, doc)?,
+        proposals: agent::load_proposals(&ws.store, ctx, doc)?.items,
+    })
+}
+
+/// Stamp `accepted_by` on the newest history entry of an object the agent proposed.
+fn attribute(h: &mut Vec<History>, user: &str) {
+    if let Some(last) = h.last_mut() {
+        last.by = "agent".into();
+        last.accepted_by = Some(user.into());
+    }
+}
+
+/// Accept one proposal: perform the corresponding core op with `by: agent, accepted-by: user`.
+pub fn accept_proposal(
+    ws: &Workspace,
+    ctx: &Context,
+    doc: &str,
+    proposal_id: &str,
+    user: &str,
+) -> Result<Proposal> {
+    let mut all = agent::load_proposals(&ws.store, ctx, doc)?;
+    let idx = all
+        .items
+        .iter()
+        .position(|p| p.id == proposal_id)
+        .ok_or_else(|| anyhow!("no proposal `{proposal_id}`"))?;
+    let p = all.items[idx].clone();
+    if p.status != ProposalStatus::Proposed {
+        bail!("proposal already {:?}", p.status);
+    }
+    let result = match &p.proposed {
+        Proposed::Context => {
+            mark_non_normative(ws, ctx, doc, &p.spans, "agent")?;
+            {
+                let _l = ws.store.lock()?;
+                let mut m = ws.store.marks(ctx, doc)?;
+                for s in &p.spans {
+                    if let Some(mk) = m.spans.get_mut(s) {
+                        mk.by = format!("agent (accepted by {user})");
+                    }
+                }
+                ws.store.save_marks(ctx, doc, &m)?;
+            }
+            "context".to_string()
+        }
+        Proposed::Req {
+            statement,
+            pattern,
+            slug,
+            groups,
+            attach,
+        } => {
+            let r = if let Some(a) = attach {
+                let r = attach_req(ws, ctx, doc, &p.spans, a, "agent")?;
+                let _l = ws.store.lock()?;
+                let mut revs = ws.store.req_revs(a)?;
+                if let Some(cur) = revs.last_mut() {
+                    attribute(&mut cur.history, user);
+                }
+                ws.store.save_req_revs(a, &revs)?;
+                r
+            } else {
+                let r = create_req(
+                    ws,
+                    ctx,
+                    doc,
+                    &p.spans,
+                    NewReq {
+                        statement,
+                        slug: slug.as_deref(),
+                        pattern: *pattern,
+                        rating: None,
+                        owner: None,
+                    },
+                    "agent",
+                )?;
+                let _l = ws.store.lock()?;
+                let mut revs = ws.store.req_revs(&r.id.slug)?;
+                if let Some(cur) = revs.last_mut() {
+                    attribute(&mut cur.history, user);
+                }
+                ws.store.save_req_revs(&r.id.slug, &revs)?;
+                r
+            };
+            // groups: create on acceptance only (`ui~grp-agent~1`)
+            for title in groups {
+                let existing = ws
+                    .store
+                    .current_grps()?
+                    .into_iter()
+                    .find(|g| g.title.eq_ignore_ascii_case(title.trim()));
+                let g = match existing {
+                    Some(g) => g,
+                    None => create_group(ws, title, None, "agent")?,
+                };
+                assign_group(ws, &g.id.slug, &[r.id.slug.clone()], "agent")?;
+                let _l = ws.store.lock()?;
+                let mut revs = ws.store.grp_revs(&g.id.slug)?;
+                if let Some(cur) = revs.last_mut() {
+                    attribute(&mut cur.history, user);
+                }
+                ws.store.save_grp_revs(&g.id.slug, &revs)?;
+            }
+            r.id.to_string()
+        }
+        Proposed::Question {
+            quote,
+            materiality,
+            readings,
+        } => {
+            let q = flag_question(
+                ws,
+                ctx,
+                doc,
+                &p.spans,
+                NewQuestion {
+                    quote: if quote.trim().is_empty() { "?" } else { quote },
+                    materiality: materiality.unwrap_or(Level::M),
+                    readings: readings
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| (((b'a' + i as u8) as char).to_string(), t.clone()))
+                        .collect(),
+                    default: None,
+                    affects: vec![],
+                    slug: None,
+                },
+                "agent",
+            )?;
+            let _l = ws.store.lock()?;
+            let mut revs = ws.store.qst_revs(&q.id.slug)?;
+            if let Some(cur) = revs.last_mut() {
+                attribute(&mut cur.history, user);
+            }
+            ws.store.save_qst_revs(&q.id.slug, &revs)?;
+            q.id.to_string()
+        }
+    };
+    let _l = ws.store.lock()?;
+    let mut all2: Proposals = agent::load_proposals(&ws.store, ctx, doc)?;
+    if let Some(p) = all2.items.iter_mut().find(|p| p.id == proposal_id) {
+        p.status = ProposalStatus::Accepted;
+        p.result = Some(result);
+    }
+    all = all2;
+    agent::save_proposals(&ws.store, ctx, doc, &all)?;
+    Ok(all.items.into_iter().find(|p| p.id == proposal_id).unwrap())
+}
+
+pub fn reject_proposal(
+    ws: &Workspace,
+    ctx: &Context,
+    doc: &str,
+    proposal_id: &str,
+) -> Result<Proposal> {
+    let _l = ws.store.lock()?;
+    let mut all = agent::load_proposals(&ws.store, ctx, doc)?;
+    let p = all
+        .items
+        .iter_mut()
+        .find(|p| p.id == proposal_id)
+        .ok_or_else(|| anyhow!("no proposal `{proposal_id}`"))?;
+    p.status = ProposalStatus::Rejected;
+    let out = p.clone();
+    agent::save_proposals(&ws.store, ctx, doc, &all)?;
+    Ok(out)
+}
+
+/// Accept every still-proposed item (per-group accept, `ui~agent-prefill~1`).
+pub fn accept_all_proposals(ws: &Workspace, ctx: &Context, doc: &str, user: &str) -> Result<usize> {
+    let ids: Vec<String> = agent::load_proposals(&ws.store, ctx, doc)?
+        .items
+        .into_iter()
+        .filter(|p| p.status == ProposalStatus::Proposed)
+        .map(|p| p.id)
+        .collect();
+    let mut n = 0;
+    for id in ids {
+        if accept_proposal(ws, ctx, doc, &id, user).is_ok() {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+pub fn clear_proposals(ws: &Workspace, ctx: &Context, doc: &str) -> Result<()> {
+    let _l = ws.store.lock()?;
+    let mut all = agent::load_proposals(&ws.store, ctx, doc)?;
+    all.items.retain(|p| p.status != ProposalStatus::Proposed);
+    agent::save_proposals(&ws.store, ctx, doc, &all)
+}
+
+#[cfg(test)]
+mod agent_tests {
+    use super::*;
+
+    /// A fake agent: reads the prompt, answers "context" for every id it sees except ones
+    /// containing "shall", which become requirements.
+    fn fake_agent_cmd() -> String {
+        // Runs with sh -c; python reads stdin.
+        r#"python3 -c '
+import sys,re,json
+p=sys.stdin.read()
+out=[]
+for m in re.finditer(r"^\[(s-[0-9a-f-]+)\] (.*)$", p, re.M):
+    sid,text=m.group(1),m.group(2)
+    if "shall" in text: out.append({"spans":[sid],"kind":"req","statement":"The system "+text[text.index("shall"):],"pattern":"ubiquitous","groups":["Rules"]})
+    elif "?" in text: out.append({"spans":[sid],"kind":"question","quote":text,"materiality":"M","readings":["yes","no"]})
+    else: out.append({"spans":[sid],"kind":"context"})
+print(json.dumps(out))
+'"#.to_string()
+    }
+
+    #[test]
+    fn prefill_roundtrip_with_fake_agent() {
+        std::env::set_var("KANSA_AGENT_CMD", fake_agent_cmd());
+        let (_tmp, ws) = tests::fixture();
+        let ctx = ws.default_context().unwrap();
+        let job = start_prefill(&ws, &ctx, "docs/hld.md").unwrap();
+        assert_eq!(job.state, agent::JobState::Running);
+        // wait for the thread
+        let mut st = prefill_status(&ws, &ctx, "docs/hld.md").unwrap();
+        for _ in 0..200 {
+            if matches!(
+                st.job.as_ref().map(|j| j.state),
+                Some(agent::JobState::Done | agent::JobState::Error)
+            ) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            st = prefill_status(&ws, &ctx, "docs/hld.md").unwrap();
+        }
+        let j = st.job.unwrap();
+        assert_eq!(j.state, agent::JobState::Done, "{:?}", j.error);
+        assert!(st.proposals.len() > 10, "{}", st.proposals.len());
+        assert!(st
+            .proposals
+            .iter()
+            .any(|p| matches!(p.proposed, Proposed::Req { .. })));
+        assert!(st
+            .proposals
+            .iter()
+            .any(|p| matches!(p.proposed, Proposed::Question { .. })));
+        // accept one req and one context, reject one
+        let req = st
+            .proposals
+            .iter()
+            .find(|p| matches!(p.proposed, Proposed::Req { .. }))
+            .unwrap()
+            .clone();
+        let acc = accept_proposal(&ws, &ctx, "docs/hld.md", &req.id, "cj").unwrap();
+        assert_eq!(acc.status, ProposalStatus::Accepted);
+        let rid: Id = acc.result.clone().unwrap().parse().unwrap();
+        let r = ws.store.current_req(&rid.slug).unwrap().unwrap();
+        assert_eq!(r.history[0].by, "agent");
+        assert_eq!(r.history[0].accepted_by.as_deref(), Some("cj"));
+        assert_eq!(ws.store.groups_by_req().unwrap()[&rid.key()], vec!["Rules"]);
+        let ctxp = st
+            .proposals
+            .iter()
+            .find(|p| matches!(p.proposed, Proposed::Context))
+            .unwrap()
+            .clone();
+        accept_proposal(&ws, &ctx, "docs/hld.md", &ctxp.id, "cj").unwrap();
+        assert!(accept_proposal(&ws, &ctx, "docs/hld.md", &ctxp.id, "cj").is_err());
+        let q = st
+            .proposals
+            .iter()
+            .find(|p| matches!(p.proposed, Proposed::Question { .. }))
+            .unwrap()
+            .clone();
+        reject_proposal(&ws, &ctx, "docs/hld.md", &q.id).unwrap();
+        let view = doc_view(&ws, &ctx, "docs/hld.md").unwrap();
+        assert!(view.coverage.meter.mapped >= 1 && view.coverage.meter.non_normative >= 1);
+        let n = accept_all_proposals(&ws, &ctx, "docs/hld.md", "cj").unwrap();
+        assert!(n > 5);
+        let view = doc_view(&ws, &ctx, "docs/hld.md").unwrap();
+        assert_eq!(
+            view.coverage.meter.residue, 1,
+            "only the rejected proposal remains"
+        );
+        std::env::remove_var("KANSA_AGENT_CMD");
+    }
+}
