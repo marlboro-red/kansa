@@ -198,6 +198,8 @@ export type Proposal = { id: string; spans: string[]; proposed: Proposed; status
 export type PrefillJob = { state: "idle" | "running" | "done" | "error"; doc: string; snapshot: string; done: number; total: number; error?: string | null; model?: string | null; started: string; finished?: string | null };
 export type PrefillStatus = { available: boolean; job: PrefillJob | null; proposals: Proposal[] };
 
+export type PrDoc = { path: string; status: "added" | "modified" | "deleted" | "renamed"; tracked: boolean };
+
 export type ExportResult = {
   inventory: string;
   exceptions: string;
@@ -267,7 +269,7 @@ export const api = {
   acceptAllProposals: (github: string, doc: string, context?: Context) => call<number>("accept_all_proposals", { github, doc, context }),
   clearProposals: (github: string, doc: string, context?: Context) => call<void>("clear_proposals", { github, doc, context }),
   openPr: (github: string, pr: number, doc: string) => call<Context>("open_pr", { github, pr, doc }),
-  prDocs: (github: string, pr: number) => call<DocEntry[]>("pr_docs", { github, pr }),
+  prDocs: (github: string, pr: number) => call<PrDoc[]>("pr_docs", { github, pr }),
   export: (github: string, out?: string) => call<ExportResult>("export", { github, out }),
 
   inventory: (github: string) => call<InventoryRow[]>("inventory", { github }),

@@ -336,6 +336,45 @@ pub fn list_markdown(repo: &Repository, refname: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
+/// Markdown files changed by `head_ref` relative to its merge-base with `base_ref`:
+/// (path, status) with status one of added|modified|deleted|renamed.
+pub fn changed_markdown(
+    repo: &Repository,
+    base_ref: &str,
+    head_ref: &str,
+) -> Result<Vec<(String, String)>> {
+    let base = resolve_commit(repo, base_ref)?;
+    let head = resolve_commit(repo, head_ref)?;
+    let mb = repo.merge_base(base.id(), head.id()).unwrap_or(base.id());
+    let old_tree = repo.find_commit(mb)?.tree()?;
+    let new_tree = head.tree()?;
+    let mut opts = git2::DiffOptions::new();
+    let diff = repo.diff_tree_to_tree(Some(&old_tree), Some(&new_tree), Some(&mut opts))?;
+    let mut out = vec![];
+    for d in diff.deltas() {
+        let path = d
+            .new_file()
+            .path()
+            .or(d.old_file().path())
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        let lower = path.to_ascii_lowercase();
+        if !(lower.ends_with(".md") || lower.ends_with(".markdown")) {
+            continue;
+        }
+        let status = match d.status() {
+            git2::Delta::Added => "added",
+            git2::Delta::Deleted => "deleted",
+            git2::Delta::Renamed => "renamed",
+            _ => "modified",
+        };
+        out.push((path, status.to_string()));
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
 /// Head sha of a ref.
 pub fn head_sha(repo: &Repository, refname: &str) -> Result<String> {
     Ok(resolve_commit(repo, refname)?.id().to_string())

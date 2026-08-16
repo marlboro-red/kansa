@@ -185,13 +185,12 @@ const PrPane: Component<{
   onChanged: () => void;
 }> = (p) => {
   const [docs, { refetch }] = createResource(() => [p.github, p.pr.number] as const, ([g, n]) => api.prDocs(g, n));
-  const changed = () => new Set(p.pr.files);
   async function toggle(path: string, tracked: boolean) {
     await p.run<unknown>(tracked ? `untracking ${path}` : `tracking ${path}`, () => (tracked ? api.untrackDoc(p.github, path) : api.trackDoc(p.github, path)));
     refetch();
     p.onChanged();
   }
-  const sorted = () => [...(docs() ?? [])].sort((a, b) => Number(changed().has(b.path)) - Number(changed().has(a.path)) || a.path.localeCompare(b.path));
+  const sorted = () => [...(docs() ?? [])].sort((a, b) => Number(b.tracked) - Number(a.tracked) || a.path.localeCompare(b.path));
   return (
     <div class="repo-pane">
       <header class="pane-head">
@@ -202,20 +201,22 @@ const PrPane: Component<{
         </div>
       </header>
       <section>
-        <h2>Markdown files at PR head</h2>
-        <p class="muted small">Files this PR changes are listed first. Open any file to read it at the PR head with the base classification projected onto it; track a file to classify it.</p>
+        <h2>Markdown files changed in this PR</h2>
+        <p class="muted small">Open a file to read it at the PR head with the base classification projected onto it; track a file to classify it.</p>
         <Show when={docs()} fallback={<p class="muted">loading…</p>}>
           <ul class="prfiles">
-            <For each={sorted()} fallback={<li class="muted">No markdown files on this PR.</li>}>
+            <For each={sorted()} fallback={<li class="muted">This PR doesn't change any markdown files.</li>}>
               {(d) => (
-                <li classList={{ changed: changed().has(d.path) }}>
+                <li classList={{ changed: true }}>
                   <span class="mono path">{d.path}</span>
-                  <Show when={changed().has(d.path)}><span class="chip pr">changed</span></Show>
+                  <span class="chip pr">{d.status}</span>
                   <span style={{ flex: 1 }} />
-                  <label class="small muted" style={{ display: "flex", gap: "6px", "align-items": "center" }}>
-                    <input type="checkbox" checked={d.tracked} onChange={() => toggle(d.path, d.tracked)} /> tracked
-                  </label>
-                  <button class="primary" onClick={() => p.onOpenDoc(d.path)}>Open at PR head</button>
+                  <Show when={d.status !== "deleted"} fallback={<span class="muted small">removed by this PR{d.tracked ? " — reconcile after merge" : ""}</span>}>
+                    <label class="small muted" style={{ display: "flex", gap: "6px", "align-items": "center" }}>
+                      <input type="checkbox" checked={d.tracked} onChange={() => toggle(d.path, d.tracked)} /> tracked
+                    </label>
+                    <button class="primary" onClick={() => p.onOpenDoc(d.path)}>Open at PR head</button>
+                  </Show>
                 </li>
               )}
             </For>

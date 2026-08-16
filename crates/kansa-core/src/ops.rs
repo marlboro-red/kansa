@@ -1033,16 +1033,30 @@ pub fn list_prs(ws: &Workspace) -> Result<Vec<PrSummary>> {
         .collect())
 }
 
-/// Markdown files at a PR head (from the fetched ref — works without `gh`), flagged tracked.
-pub fn pr_docs(ws: &Workspace, pr: u64) -> Result<Vec<DocEntry>> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrDoc {
+    pub path: String,
+    /// added | modified | deleted | renamed
+    pub status: String,
+    pub tracked: bool,
+}
+
+/// Markdown files changed by a PR (diff vs merge-base with the base branch, from the fetched
+/// refs — works without `gh`), flagged tracked.
+pub fn pr_docs(ws: &Workspace, pr: u64) -> Result<Vec<PrDoc>> {
     let cfg = ws.store.repo()?;
     let _ = repo::fetch(&ws.git);
-    let all = repo::list_markdown(&ws.git, &repo::pr_ref(pr))?;
-    Ok(all
+    let changed = repo::changed_markdown(
+        &ws.git,
+        &repo::branch_ref(&cfg.default_branch),
+        &repo::pr_ref(pr),
+    )?;
+    Ok(changed
         .into_iter()
-        .map(|p| DocEntry {
-            tracked: cfg.tracked.iter().any(|t| t.path == p),
-            path: p,
+        .map(|(path, status)| PrDoc {
+            tracked: cfg.tracked.iter().any(|t| t.path == path),
+            path,
+            status,
         })
         .collect())
 }
