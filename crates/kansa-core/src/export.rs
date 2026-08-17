@@ -167,7 +167,7 @@ pub fn find_reqtrace() -> Option<PathBuf> {
 
 /// Run `reqtrace validate` on an export; returns (exit code, combined output).
 pub fn run_reqtrace_validate(bin: &Path, out_dir: &Path) -> Result<(i32, String)> {
-    let out = std::process::Command::new(bin)
+    let out = crate::proc::command(bin)
         .arg("validate")
         .arg("--inventory")
         .arg("requirements.yaml")

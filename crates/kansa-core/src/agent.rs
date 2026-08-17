@@ -156,11 +156,11 @@ pub fn agent_available() -> bool {
 /// directly — go through `cmd /C` there. Elsewhere it's a plain executable.
 fn claude_cmd() -> Command {
     if cfg!(windows) {
-        let mut c = Command::new("cmd");
+        let mut c = crate::proc::command("cmd");
         c.args(["/C", "claude"]);
         c
     } else {
-        Command::new("claude")
+        crate::proc::command("claude")
     }
 }
 
@@ -247,7 +247,7 @@ pub fn run_agent(prompt: &str) -> Result<String> {
         }
     }) {
         // Test/override hook: shell command receiving the prompt on stdin.
-        let mut child = Command::new(if cfg!(windows) { "cmd" } else { "sh" })
+        let mut child = crate::proc::command(if cfg!(windows) { "cmd" } else { "sh" })
             .args(if cfg!(windows) {
                 ["/C", cmd.as_str()]
             } else {

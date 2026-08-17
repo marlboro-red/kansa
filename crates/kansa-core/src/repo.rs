@@ -9,7 +9,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{Cred, FetchOptions, RemoteCallbacks, Repository};
 use std::path::Path;
-use std::process::Command;
 use std::sync::OnceLock;
 
 const REFSPECS: [&str; 2] = [
@@ -24,7 +23,7 @@ pub fn gh_available() -> bool {
         if std::env::var("KANSA_NO_GH").is_ok() {
             return false;
         }
-        Command::new("gh")
+        crate::proc::command("gh")
             .args(["auth", "status"])
             .output()
             .map(|o| o.status.success())
@@ -37,7 +36,7 @@ pub fn require_gh() -> Result<()> {
     if gh_available() {
         return Ok(());
     }
-    let installed = Command::new("gh")
+    let installed = crate::proc::command("gh")
         .arg("--version")
         .output()
         .map(|o| o.status.success())
@@ -51,7 +50,7 @@ pub fn require_gh() -> Result<()> {
 
 /// Run `gh <args>` and return stdout; error carries stderr.
 pub fn gh(args: &[&str]) -> Result<String> {
-    let out = Command::new("gh")
+    let out = crate::proc::command("gh")
         .args(args)
         .output()
         .with_context(|| format!("running gh {}", args.join(" ")))?;
@@ -67,7 +66,7 @@ pub fn gh(args: &[&str]) -> Result<String> {
 
 /// Run `git -C <dir> <args>` (system git, credentials via `gh auth setup-git`).
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
+    let out = crate::proc::command("git")
         .arg("-C")
         .arg(dir)
         .args(args)
@@ -88,7 +87,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
 fn ensure_gh_git_auth() {
     static DONE: OnceLock<()> = OnceLock::new();
     DONE.get_or_init(|| {
-        let _ = Command::new("gh")
+        let _ = crate::proc::command("gh")
             .args(["auth", "setup-git", "--hostname", "github.com"])
             .output();
     });

@@ -8,6 +8,7 @@ pub mod export;
 pub mod id;
 pub mod model;
 pub mod ops;
+pub mod proc;
 pub mod reconcile;
 pub mod repo;
 pub mod segment;
