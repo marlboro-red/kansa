@@ -469,10 +469,10 @@ pub fn doc_view(ws: &Workspace, ctx: &Context, doc: &str) -> Result<DocView> {
 /// context's classification projected onto it.
 pub fn doc_view_at(ws: &Workspace, ctx: &Context, doc: &str, sha: Option<&str>) -> Result<DocView> {
     let snap = match sha {
-        Some(sha) => ws.store.load_snapshot(doc, sha)?,
+        Some(sha) => ws.store.load_snapshot_arc(doc, sha)?,
         None => ws
             .store
-            .current_snapshot(ctx, doc)?
+            .current_snapshot_arc(ctx, doc)?
             .ok_or_else(|| anyhow!("{doc} has no snapshot in this context — track it first"))?,
     };
     // Source: prefer the exact blob by sha; fall back to the ref.
@@ -490,11 +490,40 @@ pub fn doc_view_at(ws: &Workspace, ctx: &Context, doc: &str, sha: Option<&str>) 
         doc: doc.into(),
         context: ctx.clone(),
         source,
-        snapshot: snap,
+        snapshot: (*snap).clone(),
         coverage,
         round,
         pending,
         tracked,
+    })
+}
+
+/// The cheap part of `DocView`: everything that changes on classification, without the
+/// snapshot or source. Clients refetch this after each mutation (`ui~perf-classify~1`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocState {
+    pub doc: String,
+    pub snapshot: String,
+    pub coverage: DocCoverage,
+    pub round: Option<Round>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<crate::reconcile::Reconciliation>,
+    pub tracked: bool,
+}
+
+pub fn doc_state(ws: &Workspace, ctx: &Context, doc: &str) -> Result<DocState> {
+    let snap = ws
+        .store
+        .current_snapshot_arc(ctx, doc)?
+        .ok_or_else(|| anyhow!("{doc} has no snapshot in this context"))?;
+    let coverage = doc_coverage(&ws.store, ctx, &snap)?;
+    Ok(DocState {
+        doc: doc.into(),
+        snapshot: snap.sha.clone(),
+        coverage,
+        round: ws.store.open_round(ctx, doc)?,
+        pending: ws.store.pending(ctx, doc)?,
+        tracked: ws.store.repo()?.tracked.iter().any(|t| t.path == doc),
     })
 }
 
@@ -525,12 +554,18 @@ fn ensure_round(store: &Store, ctx: &Context, doc: &str) -> Result<Round> {
     Ok(r)
 }
 
-fn check_spans(store: &Store, ctx: &Context, doc: &str, spans: &[String]) -> Result<Snapshot> {
+fn check_spans(
+    store: &Store,
+    ctx: &Context,
+    doc: &str,
+    spans: &[String],
+) -> Result<std::sync::Arc<Snapshot>> {
     let snap = store
-        .current_snapshot(ctx, doc)?
+        .current_snapshot_arc(ctx, doc)?
         .ok_or_else(|| anyhow!("{doc} has no current snapshot"))?;
+    let index = snap.index();
     for s in spans {
-        if snap.span(s).is_none() {
+        if !index.contains_key(s.as_str()) {
             bail!("span `{s}` not in current snapshot of {doc}");
         }
     }
@@ -941,7 +976,7 @@ pub fn close_round(ws: &Workspace, ctx: &Context, doc: &str) -> Result<Round> {
         .store
         .open_round(ctx, doc)?
         .ok_or_else(|| anyhow!("no open round for {doc}"))?;
-    let snap = ws.store.load_snapshot(doc, &r.snapshot)?;
+    let snap = ws.store.load_snapshot_arc(doc, &r.snapshot)?;
     let cov = doc_coverage(&ws.store, ctx, &snap)?;
     if cov.meter.residue > 0 {
         bail!(
@@ -1142,7 +1177,7 @@ pub fn status(ws: &Workspace) -> Result<RepoStatus> {
     };
     let mut docs = vec![];
     for t in &cfg.tracked {
-        let snap = ws.store.current_snapshot(&ctx, &t.path)?;
+        let snap = ws.store.current_snapshot_arc(&ctx, &t.path)?;
         let meter = match &snap {
             Some(s) => Some(doc_coverage(&ws.store, &ctx, s)?.meter),
             None => None,
@@ -1150,7 +1185,7 @@ pub fn status(ws: &Workspace) -> Result<RepoStatus> {
         let rounds = ws.store.rounds(&ctx, &t.path)?;
         docs.push(DocStatus {
             doc: t.path.clone(),
-            snapshot: snap.map(|s| s.sha),
+            snapshot: snap.map(|s| s.sha.clone()),
             meter,
             open_round: rounds.iter().find(|r| r.closed.is_none()).map(|r| r.n),
             rounds_closed: rounds.iter().filter(|r| r.closed.is_some()).count(),

@@ -25,6 +25,60 @@ use std::path::{Path, PathBuf};
 
 pub const SEGMENTER_VERSION: u32 = 1;
 
+// ---------- process-wide read caches ----------
+//
+// Objects are re-read on every operation (each API call opens a fresh Workspace). Files are
+// small but numerous; parsing YAML for hundreds of requirements per keypress adds up. Cache
+// parsed files keyed by path + mtime + len — a metadata syscall replaces a parse. Snapshots
+// are immutable, so they are cached by path alone.
+
+use std::sync::{Arc, Mutex, OnceLock};
+
+type Stamp = (std::time::SystemTime, u64);
+struct FileCache<T> {
+    map: Mutex<std::collections::HashMap<PathBuf, (Stamp, Arc<T>)>>,
+}
+impl<T> FileCache<T> {
+    fn new() -> Self {
+        FileCache {
+            map: Mutex::new(Default::default()),
+        }
+    }
+    fn get_or_load(&self, path: &Path, load: impl FnOnce() -> Result<T>) -> Result<Arc<T>> {
+        let meta = fs::metadata(path)?;
+        let stamp: Stamp = (meta.modified().unwrap_or(std::time::UNIX_EPOCH), meta.len());
+        if let Some((st, v)) = self.map.lock().unwrap().get(path) {
+            if *st == stamp {
+                return Ok(v.clone());
+            }
+        }
+        let v = Arc::new(load()?);
+        self.map
+            .lock()
+            .unwrap()
+            .insert(path.to_path_buf(), (stamp, v.clone()));
+        Ok(v)
+    }
+    fn invalidate(&self, path: &Path) {
+        self.map.lock().unwrap().remove(path);
+    }
+}
+static REQ_CACHE: OnceLock<FileCache<Vec<ReqRev>>> = OnceLock::new();
+static QST_CACHE: OnceLock<FileCache<Vec<Question>>> = OnceLock::new();
+static GRP_CACHE: OnceLock<FileCache<Vec<Group>>> = OnceLock::new();
+static SNAP_CACHE: OnceLock<
+    Mutex<std::collections::HashMap<PathBuf, Arc<crate::snapshot::Snapshot>>>,
+> = OnceLock::new();
+fn req_cache() -> &'static FileCache<Vec<ReqRev>> {
+    REQ_CACHE.get_or_init(FileCache::new)
+}
+fn qst_cache() -> &'static FileCache<Vec<Question>> {
+    QST_CACHE.get_or_init(FileCache::new)
+}
+fn grp_cache() -> &'static FileCache<Vec<Group>> {
+    GRP_CACHE.get_or_init(FileCache::new)
+}
+
 #[derive(Debug, Clone)]
 pub struct Store {
     root: PathBuf,
@@ -199,34 +253,30 @@ impl Store {
         Ok(self.root.join(dir).join(format!("{slug}.yaml")))
     }
 
-    fn load_revs<T: DeserializeOwned>(&self, dir: &str, slug: &str) -> Result<Vec<T>> {
-        Ok(self
-            .read_yaml_opt(&self.slug_path(dir, slug)?)?
-            .unwrap_or_default())
-    }
-
     fn save_revs<T: Serialize>(&self, dir: &str, slug: &str, revs: &[T]) -> Result<()> {
         self.write_yaml(&self.slug_path(dir, slug)?, &revs)
     }
 
-    fn all_revs<T: DeserializeOwned>(&self, dir: &str) -> Result<Vec<Vec<T>>> {
-        let mut out = vec![];
-        for p in self.list_yaml(&self.root.join(dir))? {
-            out.push(self.read_yaml(&p)?);
-        }
-        Ok(out)
-    }
-
     // reqs
     pub fn req_revs(&self, slug: &str) -> Result<Vec<ReqRev>> {
-        self.load_revs("reqs", slug)
+        let p = self.slug_path("reqs", slug)?;
+        if !p.exists() {
+            return Ok(vec![]);
+        }
+        Ok((*req_cache().get_or_load(&p, || self.read_yaml(&p))?).clone())
     }
     pub fn save_req_revs(&self, slug: &str, revs: &[ReqRev]) -> Result<()> {
+        let p = self.slug_path("reqs", slug)?;
+        req_cache().invalidate(&p);
         self.save_revs("reqs", slug, revs)
     }
     /// Every requirement file, as its list of revs (newest last).
     pub fn all_reqs(&self) -> Result<Vec<Vec<ReqRev>>> {
-        self.all_revs("reqs")
+        let mut out = vec![];
+        for p in self.list_yaml(&self.root.join("reqs"))? {
+            out.push((*req_cache().get_or_load(&p, || self.read_yaml(&p))?).clone());
+        }
+        Ok(out)
     }
     /// Current rev of every requirement slug.
     pub fn current_reqs(&self) -> Result<Vec<ReqRev>> {
@@ -242,32 +292,48 @@ impl Store {
 
     // questions
     pub fn qst_revs(&self, slug: &str) -> Result<Vec<Question>> {
-        self.load_revs("questions", slug)
+        let p = self.slug_path("questions", slug)?;
+        if !p.exists() {
+            return Ok(vec![]);
+        }
+        Ok((*qst_cache().get_or_load(&p, || self.read_yaml(&p))?).clone())
     }
     pub fn save_qst_revs(&self, slug: &str, revs: &[Question]) -> Result<()> {
+        let p = self.slug_path("questions", slug)?;
+        qst_cache().invalidate(&p);
         self.save_revs("questions", slug, revs)
     }
     pub fn current_qsts(&self) -> Result<Vec<Question>> {
-        Ok(self
-            .all_revs::<Question>("questions")?
-            .into_iter()
-            .filter_map(|r| r.into_iter().last())
-            .collect())
+        let mut out = vec![];
+        for p in self.list_yaml(&self.root.join("questions"))? {
+            if let Some(q) = qst_cache().get_or_load(&p, || self.read_yaml(&p))?.last() {
+                out.push(q.clone());
+            }
+        }
+        Ok(out)
     }
 
     // groups
     pub fn grp_revs(&self, slug: &str) -> Result<Vec<Group>> {
-        self.load_revs("groups", slug)
+        let p = self.slug_path("groups", slug)?;
+        if !p.exists() {
+            return Ok(vec![]);
+        }
+        Ok((*grp_cache().get_or_load(&p, || self.read_yaml(&p))?).clone())
     }
     pub fn save_grp_revs(&self, slug: &str, revs: &[Group]) -> Result<()> {
+        let p = self.slug_path("groups", slug)?;
+        grp_cache().invalidate(&p);
         self.save_revs("groups", slug, revs)
     }
     pub fn current_grps(&self) -> Result<Vec<Group>> {
-        Ok(self
-            .all_revs::<Group>("groups")?
-            .into_iter()
-            .filter_map(|r| r.into_iter().last())
-            .collect())
+        let mut out = vec![];
+        for p in self.list_yaml(&self.root.join("groups"))? {
+            if let Some(g) = grp_cache().get_or_load(&p, || self.read_yaml(&p))?.last() {
+                out.push(g.clone());
+            }
+        }
+        Ok(out)
     }
 
     /// Group titles per requirement key, derived (`obj~req-groups-derived~1`).
@@ -304,7 +370,32 @@ impl Store {
         self.write_yaml(&p, snap)
     }
     pub fn load_snapshot(&self, doc: &str, sha: &str) -> Result<crate::snapshot::Snapshot> {
-        self.read_yaml(&self.snapshot_path(doc, sha))
+        Ok((*self.load_snapshot_arc(doc, sha)?).clone())
+    }
+    /// Snapshots are immutable: cached forever by path (shared, no clone).
+    pub fn load_snapshot_arc(
+        &self,
+        doc: &str,
+        sha: &str,
+    ) -> Result<Arc<crate::snapshot::Snapshot>> {
+        let p = self.snapshot_path(doc, sha);
+        let cache = SNAP_CACHE.get_or_init(Default::default);
+        if let Some(s) = cache.lock().unwrap().get(&p) {
+            return Ok(s.clone());
+        }
+        let s: Arc<crate::snapshot::Snapshot> = Arc::new(self.read_yaml(&p)?);
+        cache.lock().unwrap().insert(p, s.clone());
+        Ok(s)
+    }
+    pub fn current_snapshot_arc(
+        &self,
+        ctx: &Context,
+        doc: &str,
+    ) -> Result<Option<Arc<crate::snapshot::Snapshot>>> {
+        match self.current_sha(ctx, doc)? {
+            Some(sha) => Ok(Some(self.load_snapshot_arc(doc, &sha)?)),
+            None => Ok(None),
+        }
     }
 
     fn current_ptr(&self, ctx: &Context, doc: &str) -> PathBuf {

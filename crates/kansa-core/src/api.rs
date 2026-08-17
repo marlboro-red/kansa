@@ -61,6 +61,7 @@ pub const COMMANDS: &[&str] = &[
     "refresh_repo",
     "repo_status",
     "doc_view",
+    "doc_state",
     "mark_non_normative",
     "unmark",
     "create_req",
@@ -135,6 +136,11 @@ pub fn call(name: &str, args: &Value) -> Result<Value> {
                 &arg::<String>(args, "doc")?,
                 sha.as_deref(),
             )?)
+        }
+        "doc_state" => {
+            let w = ws(args)?;
+            let c = ctx_of(&w, args)?;
+            j(ops::doc_state(&w, &c, &arg::<String>(args, "doc")?)?)
         }
         "mark_non_normative" => {
             let w = ws(args)?;
