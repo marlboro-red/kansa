@@ -145,11 +145,23 @@ pub fn agent_available() -> bool {
     {
         return true;
     }
-    Command::new("claude")
+    claude_cmd()
         .arg("--version")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// `claude` is an npm shim (`claude.cmd`) on Windows, which `CreateProcess` won't run
+/// directly — go through `cmd /C` there. Elsewhere it's a plain executable.
+fn claude_cmd() -> Command {
+    if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        c.args(["/C", "claude"]);
+        c
+    } else {
+        Command::new("claude")
+    }
 }
 
 pub fn agent_model() -> Option<String> {
@@ -250,7 +262,7 @@ pub fn run_agent(prompt: &str) -> Result<String> {
         child.stdin.take().unwrap().write_all(prompt.as_bytes())?;
         child.wait_with_output()?
     } else {
-        let mut c = Command::new("claude");
+        let mut c = claude_cmd();
         c.arg("-p").arg(prompt).arg("--output-format").arg("text");
         if let Some(m) = agent_model() {
             c.arg("--model").arg(m);

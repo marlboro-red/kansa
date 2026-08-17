@@ -27,7 +27,8 @@ Deferred: virtualization for >5k-sentence docs, PM read-only mode, multi-user, p
 ## Run
 
 ```sh
-# prerequisites: rust stable, node 22, GitHub CLI `gh` logged in (required), optionally reqtrace + claude on PATH
+# prerequisites: rust stable, node 22, `git` + GitHub CLI `gh` logged in (required), optionally reqtrace + claude on PATH
+# windows: Git for Windows, WebView2 runtime (Tauri installs it), MSVC build tools for building from source
 cargo test                                   # core + cli (34 tests)
 cd app && npm install && npm run tauri dev   # desktop app
 ```

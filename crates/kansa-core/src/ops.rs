@@ -2278,6 +2278,7 @@ print(json.dumps(out))
     }
 
     #[test]
+    #[cfg(unix)] // the fake agent is a python3/sh one-liner
     fn prefill_roundtrip_with_fake_agent() {
         std::env::set_var("KANSA_AGENT_CMD", fake_agent_cmd());
         let (_tmp, ws) = tests::fixture();
