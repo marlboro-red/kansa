@@ -1,3 +1,26 @@
+# Rust
 /target
+**/*.rs.bk
+
+# Node / Vite
 node_modules
 dist
+*.local
+*.tsbuildinfo
+
+# Tauri
+app/src-tauri/gen/schemas
+app/src-tauri/target
+app/src-tauri/WixTools
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# Local kansa state / test homes
+.kansa-home
+kansa-home*/
