@@ -1,3 +1,4 @@
+import { makeDraggable } from "./drag";
 import { createMemo, createSignal, For, onMount, Show, type Component } from "solid-js";
 import type { Level, Pattern, Req } from "./api";
 import { slugOf } from "./Classifier";
@@ -30,6 +31,8 @@ export const ReqPalette: Component<{
   const [slug, setSlug] = createSignal("");
   const [pattern, setPattern] = createSignal<Pattern | undefined>(guessPattern(p.selectionText));
   let input: HTMLInputElement | undefined;
+  let dlg: HTMLDivElement | undefined;
+  let head: HTMLDivElement | undefined;
   let stmt: HTMLTextAreaElement | undefined;
 
   const matches = createMemo(() => {
@@ -45,7 +48,7 @@ export const ReqPalette: Component<{
   });
   const total = () => matches().length + 1; // + create row
 
-  onMount(() => input?.focus());
+  onMount(() => { input?.focus(); if (dlg && head) makeDraggable(dlg, head, "req"); });
 
   function choose(i: number) {
     if (i < matches().length) p.onSubmit({ mode: "attach", slug: slugOf(matches()[i].id) });
@@ -71,8 +74,8 @@ export const ReqPalette: Component<{
 
   return (
     <div class="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) p.onClose(); }}>
-      <div class="dialog" role="dialog" aria-label="Map to requirement">
-        <div class="dhead">
+      <div class="dialog" role="dialog" ref={dlg} aria-label="Map to requirement">
+        <div class="dhead" ref={head} title="Drag to move · double-click to reset">
           <span class="title">{creating() ? "New requirement" : "Map to requirement"}</span>
           <span class="quote" title={p.selectionText}>“{p.selectionText}”</span>
         </div>

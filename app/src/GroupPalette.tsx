@@ -1,3 +1,4 @@
+import { makeDraggable } from "./drag";
 import { createMemo, createSignal, For, onMount, type Component } from "solid-js";
 import type { GroupRollup } from "./api";
 import { slugOf } from "./Classifier";
@@ -17,7 +18,9 @@ export const GroupPalette: Component<{
   const [query, setQuery] = createSignal("");
   const [active, setActive] = createSignal(0);
   let input: HTMLInputElement | undefined;
-  onMount(() => input?.focus());
+  let dlg: HTMLDivElement | undefined;
+  let head: HTMLDivElement | undefined;
+  onMount(() => { input?.focus(); if (dlg && head) makeDraggable(dlg, head, "group"); });
 
   const matches = createMemo(() => {
     const q = query().trim().toLowerCase();
@@ -44,8 +47,8 @@ export const GroupPalette: Component<{
 
   return (
     <div class="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) p.onClose(); }}>
-      <div class="dialog" role="dialog" aria-label="Assign to group" style={{ width: "min(520px, 92vw)" }}>
-        <div class="dhead">
+      <div class="dialog" role="dialog" ref={dlg} aria-label="Assign to group" style={{ width: "min(520px, 92vw)" }}>
+        <div class="dhead" ref={head} title="Drag to move · double-click to reset">
           <span class="title">Add to group</span>
           <span class="quote mono">{p.targets.length === 1 ? `req~${p.targets[0]}` : `${p.targets.length} requirements`}</span>
         </div>

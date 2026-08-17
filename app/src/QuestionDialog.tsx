@@ -1,3 +1,4 @@
+import { makeDraggable } from "./drag";
 import { createSignal, For, onMount, type Component } from "solid-js";
 import { createStore } from "solid-js/store";
 import type { Level } from "./api";
@@ -16,7 +17,9 @@ export const QuestionDialog: Component<{
   ]);
   const [def, setDef] = createSignal<string | undefined>(undefined);
   let first: HTMLInputElement | undefined;
-  onMount(() => first?.focus());
+  let dlg: HTMLDivElement | undefined;
+  let head: HTMLDivElement | undefined;
+  onMount(() => { first?.focus(); if (dlg && head) makeDraggable(dlg, head, "question"); });
 
   const canSubmit = () => quote().trim().length > 0;
   function submit() {
@@ -34,10 +37,11 @@ export const QuestionDialog: Component<{
       <div
         class="dialog"
         role="dialog"
+        ref={dlg}
         aria-label="Flag as question"
         onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } }}
       >
-        <div class="dhead"><span class="title">Flag as question</span></div>
+        <div class="dhead" ref={head} title="Drag to move · double-click to reset"><span class="title">Flag as question</span></div>
         <div class="dbody">
           <div class="field">
             <label>Quoted prose</label>

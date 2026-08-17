@@ -333,7 +333,8 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .statusbar .keys span { display: inline-flex; gap: 5px; align-items: center; }
 
 /* palette / dialogs */
-.overlay { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 30; display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+.overlay { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.18); z-index: 30; display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+.dialog .dhead { cursor: grab; }
 .dialog {
   width: min(680px, 92vw); background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px;
   box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column; max-height: 76vh;
