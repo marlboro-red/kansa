@@ -40,10 +40,22 @@ export function createSwr<T>(key: () => string, fetcher: (force: boolean) => Pro
  * Memory-first resource: paints the last known value for `key` immediately (from a
  * process-wide map), then fetches and updates. Use for anything the user navigates back to.
  */
+const inflight = new Map<string, Promise<unknown>>();
+
 export function createCached<T>(key: () => string | null, fetcher: (k: string) => Promise<T>) {
   const [res, actions] = createResource(
     () => key(),
-    async (k) => { const v = await fetcher(k); mem.set(k, v); return v; },
+    async (k) => {
+      // Dedupe concurrent fetches for the same key (several panes ask for repo status at once).
+      let pr = inflight.get(k) as Promise<T> | undefined;
+      if (!pr) {
+        pr = fetcher(k).finally(() => inflight.delete(k));
+        inflight.set(k, pr);
+      }
+      const v = await pr;
+      mem.set(k, v);
+      return v;
+    },
     { initialValue: (key() ? (mem.get(key()!) as T | undefined) : undefined) },
   );
   // When the key changes, seed from memory synchronously so there is no flash of "loading".
