@@ -4,7 +4,7 @@ import { Classifier, type Toast } from "./Classifier";
 import { InventoryView } from "./InventoryView";
 import { ReviewView } from "./ReviewView";
 import type { Context, PrSummary } from "./api";
-import { ago, createSwr } from "./swr";
+import { ago, createCached, createSwr } from "./swr";
 
 type Route =
   | { kind: "home" }
@@ -157,7 +157,7 @@ function loadRoute(): Route {
 }
 
 const DocNav: Component<{ repo: RepoSummary; current: string | null; onOpen: (doc: string) => void }> = (p) => {
-  const [status] = createResource(() => p.repo.github, api.repoStatus);
+  const [status] = createCached(() => `status:${p.repo.github}`, () => api.repoStatus(p.repo.github));
   return (
     <div class="docnav">
       <For each={p.repo.tracked}>
@@ -251,8 +251,8 @@ const RepoPane: Component<{
   onOpenDoc: (doc: string) => void;
   onOpenPr: (pr: PrSummary) => void;
 }> = (p) => {
-  const [docs, { refetch: refetchDocs }] = createResource(() => p.github, api.listDocs);
-  const [status, { refetch: refetchStatus }] = createResource(() => p.github, api.repoStatus);
+  const [docs, { refetch: refetchDocs }] = createCached(() => `docs:${p.github}`, () => api.listDocs(p.github));
+  const [status, { refetch: refetchStatus }] = createCached(() => `status:${p.github}`, () => api.repoStatus(p.github));
   const [prErr, setPrErr] = createSignal("");
   const [prsC, { refresh: refreshPrs }] = createSwr(() => `prs:${p.github}`, (force) => api.listPrs(p.github, force).catch((e) => { setPrErr(String(e)); return { data: [] as PrSummary[], fetched_at: new Date().toISOString(), refreshing: false }; }));
   const prs = () => prsC()?.data;

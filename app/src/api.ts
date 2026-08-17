@@ -107,6 +107,8 @@ export type DocView = {
   tracked: boolean;
 };
 
+export type DocState = { doc: string; snapshot: string; coverage: DocView["coverage"]; round: Round | null; pending?: Reconciliation | null; tracked: boolean };
+
 export type Status = "extracted" | "assumed" | "confirmed" | "disputed" | "retired";
 export type Pattern = "ubiquitous" | "event-driven" | "state-driven" | "unwanted" | "optional" | "complex";
 export type Level = "H" | "M" | "L";
@@ -223,6 +225,7 @@ export const api = {
   refreshRepo: (github: string) => call<DocChange[]>("refresh_repo", { github }),
   repoStatus: (github: string) => call<RepoStatus>("repo_status", { github }),
   docView: (github: string, doc: string, context?: Context, sha?: string) => call<DocView>("doc_view", { github, doc, context, sha }),
+  docState: (github: string, doc: string, context?: Context) => call<DocState>("doc_state", { github, doc, context }),
   listReqs: (github: string) => call<Req[]>("list_reqs", { github }),
 
   markNonNormative: (github: string, doc: string, spans: string[], context?: Context) =>

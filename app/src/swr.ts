@@ -36,6 +36,30 @@ export function createSwr<T>(key: () => string, fetcher: (force: boolean) => Pro
   return [wrapped, { refresh: () => { setForce(true); return refetch(); }, refetch, mutate }] as const;
 }
 
+/**
+ * Memory-first resource: paints the last known value for `key` immediately (from a
+ * process-wide map), then fetches and updates. Use for anything the user navigates back to.
+ */
+export function createCached<T>(key: () => string | null, fetcher: (k: string) => Promise<T>) {
+  const [res, actions] = createResource(
+    () => key(),
+    async (k) => { const v = await fetcher(k); mem.set(k, v); return v; },
+    { initialValue: (key() ? (mem.get(key()!) as T | undefined) : undefined) },
+  );
+  // When the key changes, seed from memory synchronously so there is no flash of "loading".
+  const read = (() => {
+    const k = key();
+    const v = res();
+    if (v === undefined && k && mem.has(k)) return mem.get(k) as T;
+    return v;
+  }) as Resource<T | undefined>;
+  Object.defineProperty(read, "loading", { get: () => res.loading });
+  Object.defineProperty(read, "latest", { get: () => res.latest ?? (key() ? (mem.get(key()!) as T | undefined) : undefined) });
+  Object.defineProperty(read, "error", { get: () => res.error });
+  Object.defineProperty(read, "state", { get: () => res.state });
+  return [read, { ...actions, mutate: (v: T) => { if (key()) mem.set(key()!, v); return actions.mutate(() => v); } }] as const;
+}
+
 export function ago(iso: string): string {
   const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
   if (s < 5) return "just now";

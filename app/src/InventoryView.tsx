@@ -1,9 +1,10 @@
-import { createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type Component } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, onMount, Show, type Component } from "solid-js";
 import { api, type ExportResult, type GroupRollup, type InventoryRow, type Status } from "./api";
 import { slugOf } from "./Classifier";
 import type { Toast } from "./Classifier";
 import { ReqDrawer } from "./ReqDrawer";
 import { GroupPalette } from "./GroupPalette";
+import { createCached } from "./swr";
 
 const STATUSES: Status[] = ["extracted", "assumed", "confirmed", "disputed", "retired"];
 type GroupBy = "none" | "group" | "doc" | "status";
@@ -14,9 +15,9 @@ export const InventoryView: Component<{
   onOpenAnchor: (doc: string, spanId: string) => void;
   toast: (t: Toast | null) => void;
 }> = (p) => {
-  const [rows, { refetch: refetchRows }] = createResource(() => p.github, api.inventory);
-  const [groups, { refetch: refetchGroups }] = createResource(() => p.github, api.listGroups);
-  const [status, { refetch: refetchStatus }] = createResource(() => p.github, api.repoStatus);
+  const [rows, { refetch: refetchRows }] = createCached(() => `inventory:${p.github}`, () => api.inventory(p.github));
+  const [groups, { refetch: refetchGroups }] = createCached(() => `groups:${p.github}`, () => api.listGroups(p.github));
+  const [status, { refetch: refetchStatus }] = createCached(() => `status:${p.github}`, () => api.repoStatus(p.github));
   const refetchAll = () => { refetchRows(); refetchGroups(); refetchStatus(); };
 
   const [q, setQ] = createSignal("");

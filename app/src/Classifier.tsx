@@ -10,7 +10,7 @@ import {
   Show,
   type Component,
 } from "solid-js";
-import { createStore, produce } from "solid-js/store";
+import { createStore, produce, reconcile } from "solid-js/store";
 import { Dynamic } from "solid-js/web";
 import { api, type DocView, type Req, type Span, type SpanState, type SpanStatus, type Pattern, type Level } from "./api";
 import { ReqPalette } from "./ReqPalette";
@@ -20,6 +20,7 @@ import { GroupPalette } from "./GroupPalette";
 import { ReconcilePanel } from "./ReconcilePanel";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { ByteSource, codeHtml, inlineHtml, stripBlockPrefix, tableCells } from "./md";
+import { createCached } from "./swr";
 import type { Proposal } from "./api";
 import type { Context, Decision } from "./api";
 
@@ -37,13 +38,26 @@ type Props = {
 };
 
 /** Everything the classifier knows about one span, merged with optimistic patches. */
-export type SpanRow = { span: Span; status: SpanStatus; pending: boolean };
+export type SpanRow = { id: string; span: Span; status: SpanStatus; pending: boolean };
 
 export const Classifier: Component<Props> = (p) => {
   const ctx = () => p.context;
   const isPr = () => !!p.context && "pr" in p.context;
-  const [view, { mutate }] = createResource(() => [p.github, p.doc, JSON.stringify(p.context ?? null)] as const, ([g, d]) => api.docView(g, d, ctx()));
+  const viewKey = () => `doc:${p.github}:${p.doc}:${JSON.stringify(p.context ?? null)}`;
+  const [view, { mutate }] = createCached(viewKey, () => api.docView(p.github, p.doc, ctx()));
   const reload = async () => mutate(await api.docView(p.github, p.doc, ctx()));
+  /** Cheap refresh after a classification: coverage/round/pending only; full reload if the snapshot moved. */
+  let inflight = 0; // mutations awaiting their state refresh
+  const reloadState = async () => {
+    const v = view();
+    if (!v) return reload();
+    const st = await api.docState(p.github, p.doc, ctx());
+    if (st.snapshot !== v.snapshot.sha) return reload();
+    // If newer mutations are still in flight, this state is already stale — applying it would
+    // briefly revert their optimistic paint. The last one to land applies.
+    if (inflight > 1) return;
+    mutate({ ...v, coverage: st.coverage, round: st.round, pending: st.pending, tracked: st.tracked });
+  };
   // Reconciliation review: render the incoming snapshot instead of the current one.
   const [reviewing, setReviewing] = createSignal(false);
   const [incoming, { refetch: refetchIncoming }] = createResource(
@@ -69,8 +83,8 @@ export const Classifier: Component<Props> = (p) => {
   });
   const [focusSpan, setFocusSpan] = createSignal<string | null>(null);
   const active = () => (reviewing() ? incoming() : view());
-  const [reqs, { refetch: refetchReqs }] = createResource(() => p.github, api.listReqs);
-  const [groups, { refetch: refetchGroups }] = createResource(() => p.github, api.listGroups);
+  const [reqs, { refetch: refetchReqs }] = createCached(() => `reqs:${p.github}`, () => api.listReqs(p.github));
+  const [groups, { refetch: refetchGroups }] = createCached(() => `groups:${p.github}`, () => api.listGroups(p.github));
   const groupsByReq = createMemo(() => {
     const m = new Map<string, string[]>();
     for (const g of groups() ?? []) for (const mem of g.group.members) { const k = slugOf(mem); m.set(k, [...(m.get(k) ?? []), g.group.title]); }
@@ -79,19 +93,18 @@ export const Classifier: Component<Props> = (p) => {
   const [groupLens, setGroupLens] = createSignal<string | null>(null); // group slug filter (`ui~grp-lens~1`)
   const [groupTargets, setGroupTargets] = createSignal<string[]>([]);
 
-  // ---- optimistic patches: span id → status override
-  const [patches, setPatches] = createStore<Record<string, SpanStatus>>({});
-
-  const rows = createMemo<SpanRow[]>(() => {
+  const computedRows = createMemo<SpanRow[]>(() => {
     const v = active();
     if (!v) return [];
     const statusById = new Map(v.coverage.spans);
-    return v.snapshot.spans.map((span) => {
-      const base = statusById.get(span.id)!;
-      const patch = patches[span.id];
-      return { span, status: patch ?? base, pending: !!patch };
-    });
+    return v.snapshot.spans.map((span) => ({ id: span.id, span, status: statusById.get(span.id)!, pending: false }));
   });
+  // Fine-grained store: `reconcile` only touches rows whose status actually changed, so a
+  // keypress re-runs a handful of span effects instead of all of them (`ui~perf-classify~1`).
+  const [rowStore, setRowStore] = createStore<{ list: SpanRow[] }>({ list: [] });
+  createEffect(() => setRowStore("list", reconcile(computedRows(), { key: "id", merge: true })));
+  const rows = () => rowStore.list;
+  const rowIndex = createMemo(() => { const m = new Map<string, number>(); active()?.snapshot.spans.forEach((sp, i) => m.set(sp.id, i)); return m; });
 
   const meter = createMemo(() => {
     let total = 0, residue = 0, mapped = 0, nn = 0, q = 0;
@@ -186,27 +199,32 @@ export const Classifier: Component<Props> = (p) => {
   }
 
   // ---- mutations (optimistic → api → refetch)
-  async function mutateSpans(ids: string[], optimistic: (prev: SpanStatus) => SpanStatus, call: () => Promise<unknown>) {
-    const rs = rows();
-    const before = new Map(ids.map((id) => [id, rs.find((r) => r.span.id === id)!.status]));
-    setPatches(produce((s) => { for (const id of ids) s[id] = optimistic(before.get(id)!); }));
+  /** Optimistic update: paint the new state on exactly the touched rows, persist, then sync
+   *  from core (which reconciles only what differs). On failure, resync = rollback + toast. */
+  async function mutateSpans(ids: string[], optimistic: (prev: SpanStatus) => SpanStatus, call: () => Promise<unknown>, touchesReqs = true) {
+    const idx = rowIndex();
+    const touched = ids.map((id) => idx.get(id)).filter((i): i is number => i !== undefined);
+    setRowStore(produce((st) => { for (const i of touched) { st.list[i].status = optimistic(st.list[i].status); st.list[i].pending = true; } }));
     setBusy(true);
+    inflight++;
     try {
       await call();
-      await reload();
+      await reloadState();
       if (reviewing()) refetchIncoming();
-      refetchReqs();
+      if (touchesReqs) refetchReqs();
     } catch (e) {
       p.toast({ kind: "error", text: String(e) });
+      await reloadState().catch(() => {});
     } finally {
-      setPatches(produce((s) => { for (const id of ids) delete s[id]; }));
+      inflight--;
+      setRowStore(produce((st) => { for (const i of touched) st.list[i].pending = false; }));
       setBusy(false);
     }
   }
 
   function markNonNormative() {
     const ids = selectedIds();
-    mutateSpans(ids, (s) => ({ ...s, state: "non-normative" }), () => api.markNonNormative(p.github, p.doc, ids, ctx())).then(() => afterClassify());
+    mutateSpans(ids, (s) => ({ ...s, state: "non-normative" }), () => api.markNonNormative(p.github, p.doc, ids, ctx()), false).then(() => afterClassify());
   }
   function clearClassification() {
     const rs = rows();
@@ -483,9 +501,8 @@ export const Classifier: Component<Props> = (p) => {
                   onPick={(i, shift) => { if (!pickSpan(i)) move(i, shift); }}
                   focus={focusSpan()}
                   added={reviewing() ? new Set(view()?.pending?.added ?? []) : EMPTY}
-                  proposals={reviewing() ? new Map() : proposalBySpan()}
+                  proposals={reviewing() ? EMPTY_MAP : proposalBySpan()}
                   onPickReq={(slug) => setLinkedReq(slug)}
-                  tick={tick()}
                 />
               )}
             </Show>
@@ -604,6 +621,8 @@ export const Classifier: Component<Props> = (p) => {
 
 const [tick, setTick] = createSignal(0);
 const EMPTY = new Set<string>();
+const HTML_CACHE = new Map<string, string>();
+const EMPTY_MAP = new Map<string, Proposal>();
 
 // ---------------------------------------------------------------------------
 // Document body: renders spans grouped into paragraphs / lists / tables / code.
@@ -616,9 +635,10 @@ type BlockGroup =
   | { kind: "code"; item: number }
   | { kind: "html"; item: number };
 
-function groupBlocks(rows: SpanRow[], source: string): BlockGroup[] {
+function groupBlocks(spans: Span[], source: string): BlockGroup[] {
   const out: BlockGroup[] = [];
   let i = 0;
+  const rows = spans.map((span) => ({ span }));
   const gapHasBlank = (a: Span, b: Span) => /\n[ \t]*\n/.test(source.slice(a.end, b.start));
   while (i < rows.length) {
     const s = rows[i].span;
@@ -649,10 +669,15 @@ const DocBody: Component<{
   dimOthers: boolean;
   onPick: (i: number, shift: boolean) => void;
   onPickReq: (slug: string) => void;
-  tick: number;
 }> = (p) => {
-  const groups = createMemo(() => groupBlocks(p.rows, p.view.source));
-  const bytes = createMemo(() => new ByteSource(p.view.source));
+  // Block structure depends only on the snapshot (stable across classification) — never rebuild
+  // the document DOM on a keypress.
+  // `view` is replaced on every refresh but snapshot/source keep their identity; memoizing them
+  // means the block structure (and the whole doc DOM) only rebuilds when the snapshot changes.
+  const snap = createMemo(() => p.view.snapshot);
+  const source = createMemo(() => p.view.source);
+  const groups = createMemo(() => groupBlocks(snap().spans, source()));
+  const bytes = createMemo(() => new ByteSource(source()));
   const srcOf = (sp: Span) => bytes().slice(sp.start, sp.end);
   /** Inline HTML for a prose/list/heading span: its own markdown slice, formatting kept. */
   const inline = (sp: Span) => {
@@ -665,15 +690,28 @@ const DocBody: Component<{
   const [marks, setMarks] = createSignal<{ top: number; height: number; row: SpanRow; prop?: Proposal }[]>([]);
 
   // Measure margin-mark positions after render / scroll / resize.
+  let elById: Map<string, HTMLElement> | null = null;
+  const elementIndex = () => {
+    if (!inner) return new Map<string, HTMLElement>();
+    if (!elById) {
+      elById = new Map();
+      inner.querySelectorAll<HTMLElement>("[data-sid]").forEach((el) => elById!.set(el.dataset.sid!, el));
+    }
+    return elById;
+  };
   function measure() {
     if (!inner) return;
+    const idx = elementIndex();
     const base = inner.getBoundingClientRect().top;
     const out: { top: number; height: number; row: SpanRow; prop?: Proposal }[] = [];
     let lastTop = -1e9;
-    for (const r of p.rows) {
-      const prop = r.status.state === "unclassified" ? p.proposals.get(r.span.id) : undefined;
+    // Hoist prop reads out of the loop (each `p.x` access is a getter).
+    const rowsArr = p.rows;
+    const props = p.proposals;
+    for (const r of rowsArr) {
+      const prop = r.status.state === "unclassified" ? props.get(r.span.id) : undefined;
       if (r.status.state === "unclassified" && !prop) continue;
-      const el = inner.querySelector<HTMLElement>(`[data-sid="${CSS.escape(r.span.id)}"]`);
+      const el = idx.get(r.span.id);
       if (!el) continue;
       const rect = el.getBoundingClientRect();
       const top = rect.top - base;
@@ -684,68 +722,90 @@ const DocBody: Component<{
     }
     setMarks(out);
   }
-  createEffect(() => { p.rows; p.tick; p.proposals; groups(); requestAnimationFrame(measure); });
+  // Re-measure when classification/proposals change or the pane resizes — never on scroll
+  // (marks are absolutely positioned inside the scrolling content, so they move for free).
+  let raf = 0;
+  const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(measure); };
+  createEffect(() => { p.rows; p.proposals; groups(); elById = null; schedule(); });
   onMount(() => {
-    const ro = new ResizeObserver(() => measure());
+    const ro = new ResizeObserver(() => schedule());
     if (inner) ro.observe(inner);
-    onCleanup(() => ro.disconnect());
+    onCleanup(() => { ro.disconnect(); cancelAnimationFrame(raf); });
   });
 
+  // Rendered HTML per span is a pure function of the snapshot — compute once per process
+  // (module-level cache keyed by snapshot sha), so reopening a doc skips the markdown pass.
+  const spanHtml = (sp: Span) => {
+    const key = `${snap().sha}:${sp.id}`;
+    let h = HTML_CACHE.get(key);
+    if (h === undefined) {
+      if (HTML_CACHE.size > 50_000) HTML_CACHE.clear();
+      h = inline(sp);
+      HTML_CACHE.set(key, h);
+    }
+    return h;
+  };
   const spanEl = (i: number, block = false) => {
-    const r = () => p.rows[i];
+    const sp = snap().spans[i]; // static content
+    const st = () => p.rows[i]?.status; // reactive state
+    const pend = () => p.rows[i]?.pending ?? false;
+    const isText = sp.block !== "code" && sp.block !== "html" && sp.block !== "row";
     return (
       <span
         class="sp"
         classList={{
           block,
-          [`state-${r().status.state}`]: true,
-          structural: r().status.structural,
+          "state-unclassified": st()?.state === "unclassified",
+          "state-mapped": st()?.state === "mapped",
+          "state-non-normative": st()?.state === "non-normative",
+          "state-question": st()?.state === "question",
+          structural: st()?.structural ?? false,
           current: p.cursor === i,
           selected: i >= p.selRange[0] && i <= p.selRange[1] && p.selRange[0] !== p.selRange[1],
-          linked: p.linked.has(r().span.id) || p.focus === r().span.id,
-          added: p.added.has(r().span.id),
-          proposed: p.proposals.has(r().span.id) && r().status.state === "unclassified",
-          dim: (p.dimOthers && !p.linked.has(r().span.id)) || (!!p.lens && !p.lens.has(r().span.id) && !r().status.structural),
-          pending: r().pending,
+          linked: p.linked.has(sp.id) || p.focus === sp.id,
+          added: p.added.has(sp.id),
+          proposed: p.proposals.has(sp.id) && st()?.state === "unclassified",
+          dim: (p.dimOthers && !p.linked.has(sp.id)) || (!!p.lens && !p.lens.has(sp.id) && !(st()?.structural ?? false)),
+          pending: pend(),
         }}
-        data-sid={r().span.id}
+        data-sid={sp.id}
         onMouseDown={(e) => { e.preventDefault(); p.onPick(i, e.shiftKey); }}
-        title={r().span.id}
-        innerHTML={r().span.block === "code" || r().span.block === "html" || r().span.block === "row" ? undefined : inline(r().span)}
+        title={sp.id}
+        innerHTML={isText ? spanHtml(sp) : undefined}
       >
-        {r().span.block === "row" ? rowCells(i) : r().span.block === "code" ? codeBlock(i) : r().span.block === "html" ? r().span.text : undefined}
+        {sp.block === "row" ? rowCells(i) : sp.block === "code" ? codeBlock(i) : sp.block === "html" ? sp.text : undefined}
       </span>
     );
   };
   const rowCells = (i: number) => {
-    const cells = tableCells(srcOf(p.rows[i].span));
+    const cells = tableCells(srcOf(snap().spans[i]));
     return <For each={cells}>{(c) => <span class="cell" innerHTML={inlineHtml(c)} />}</For>;
   };
   const codeBlock = (i: number) => {
-    const { lang, html } = codeHtml(srcOf(p.rows[i].span));
+    const { lang, html } = codeHtml(srcOf(snap().spans[i]));
     return <code class={lang ? `hljs language-${lang}` : "hljs"} innerHTML={html} />;
   };
   // Column alignment/widths: table rows render as a CSS grid with N equal-ish columns.
-  const tableCols = (items: number[]) => Math.max(1, ...items.map((i) => tableCells(srcOf(p.rows[i].span)).length));
+  const tableCols = (items: number[]) => Math.max(1, ...items.map((i) => tableCells(srcOf(snap().spans[i])).length));
 
   return (
     <div class="docinner" ref={inner}>
       <div class="margin">
-        <For each={marks()}>
+        <Index each={marks()}>
           {(m) => (
-            <div class={`mark state-${m.row.status.state}`} classList={{ pending: m.row.pending, proposed: !!m.prop }} style={{ top: `${m.top}px` }}>
+            <div class="mark" classList={{ [`state-${m().row.status.state}`]: true, pending: m().row.pending, proposed: !!m().prop }} style={{ top: `${m().top}px` }}>
               <div class="ids">
-                <Show when={m.prop}>{(pr) => <span class="id prop" title={pr().proposed.kind === "req" && "statement" in pr().proposed ? (pr().proposed as { statement: string }).statement : pr().proposed.kind}>✦ {pr().proposed.kind === "req" ? ((pr().proposed as { slug?: string | null }).slug ?? "requirement") : pr().proposed.kind}</span>}</Show>
-                <For each={m.row.status.reqs}>
+                <Show when={m().prop}>{(pr) => <span class="id prop" title={pr().proposed.kind === "req" && "statement" in pr().proposed ? (pr().proposed as { statement: string }).statement : pr().proposed.kind}>✦ {pr().proposed.kind === "req" ? ((pr().proposed as { slug?: string | null }).slug ?? "requirement") : pr().proposed.kind}</span>}</Show>
+                <For each={m().row.status.reqs}>
                   {(id) => <span class="id" onClick={() => p.onPickReq(slugOf(id))} title={id}>{id.replace(/^req~/, "").replace(/~\d+$/, "")}</span>}
                 </For>
-                <For each={m.row.status.questions}>{(id) => <span class="id qid" title={id}>?{id.replace(/^qst~/, "").replace(/~\d+$/, "").slice(0, 14)}</span>}</For>
-                <Show when={m.row.status.state === "non-normative"}><span class="nn">context</span></Show>
+                <For each={m().row.status.questions}>{(id) => <span class="id qid" title={id}>?{id.replace(/^qst~/, "").replace(/~\d+$/, "").slice(0, 14)}</span>}</For>
+                <Show when={m().row.status.state === "non-normative"}><span class="nn">context</span></Show>
               </div>
               <span class="rule" />
             </div>
           )}
-        </For>
+        </Index>
       </div>
       <For each={groups()}>
         {(g) => {
@@ -757,7 +817,7 @@ const DocBody: Component<{
             case "ul":
               return (
                 <ul>
-                  <For each={g.items}>{(i) => <li style={{ "margin-left": `${((p.rows[i].span.depth ?? 1) - 1) * 1.3}em` }}>{spanEl(i)}</li>}</For>
+                  <For each={g.items}>{(i) => <li style={{ "margin-left": `${((snap().spans[i].depth ?? 1) - 1) * 1.3}em` }}>{spanEl(i)}</li>}</For>
                 </ul>
               );
             case "table":
@@ -782,6 +842,7 @@ const DocBody: Component<{
 
 const Rail: Component<{ rows: SpanRow[]; cursor: number; onJump: (i: number) => void; docEl?: HTMLDivElement; tick: number }> = (p) => {
   let el: HTMLDivElement | undefined;
+  let canvas: HTMLCanvasElement | undefined;
   const n = () => Math.max(1, p.rows.length);
   const [viewport, setViewport] = createSignal<{ top: number; height: number }>({ top: 0, height: 0 });
   createEffect(() => {
@@ -790,6 +851,33 @@ const Rail: Component<{ rows: SpanRow[]; cursor: number; onJump: (i: number) => 
     if (!d) return;
     const total = d.scrollHeight || 1;
     setViewport({ top: (d.scrollTop / total) * 100, height: (d.clientHeight / total) * 100 });
+  });
+  // One canvas draw per classification change instead of thousands of DOM ticks.
+  function draw() {
+    if (!canvas || !el) return;
+    const cs = getComputedStyle(el);
+    const col = { coral: cs.getPropertyValue("--coral").trim(), jade: cs.getPropertyValue("--jade").trim(), violet: cs.getPropertyValue("--violet").trim(), line: cs.getPropertyValue("--line-2").trim() };
+    const dpr = window.devicePixelRatio || 1;
+    const w = el.clientWidth, h = el.clientHeight;
+    if (canvas.width !== w * dpr || canvas.height !== h * dpr) { canvas.width = w * dpr; canvas.height = h * dpr; canvas.style.width = `${w}px`; canvas.style.height = `${h}px`; }
+    const g = canvas.getContext("2d")!;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const rows = p.rows, N = n();
+    const th = Math.max(1, Math.min(2, h / N));
+    for (let i = 0; i < rows.length; i++) {
+      const s = rows[i].status;
+      if (s.structural && s.state === "unclassified") continue;
+      g.fillStyle = s.state === "unclassified" ? col.coral : s.state === "mapped" ? col.jade : s.state === "question" ? col.violet : col.line;
+      g.fillRect(3, (i / N) * h, w - 6, th);
+    }
+  }
+  let raf = 0;
+  createEffect(() => { p.rows; cancelAnimationFrame(raf); raf = requestAnimationFrame(draw); });
+  onMount(() => {
+    const ro = new ResizeObserver(() => draw());
+    if (el) ro.observe(el);
+    onCleanup(() => { ro.disconnect(); cancelAnimationFrame(raf); });
   });
   return (
     <div
@@ -802,16 +890,8 @@ const Rail: Component<{ rows: SpanRow[]; cursor: number; onJump: (i: number) => 
       }}
       title="Residue rail — click to jump"
     >
+      <canvas ref={canvas} class="ticks" />
       <div class="view" style={{ top: `${viewport().top}%`, height: `${viewport().height}%` }} />
-      <For each={p.rows}>
-        {(r, i) => (
-          <div
-            class={`tick state-${r.status.state}`}
-            classList={{ structural: r.status.structural && r.status.state === "unclassified" }}
-            style={{ top: `calc(${(i() / n()) * 100}% )` }}
-          />
-        )}
-      </For>
       <div class="cursor" style={{ top: `${(p.cursor / n()) * 100}%` }} />
     </div>
   );

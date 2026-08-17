@@ -2,6 +2,7 @@ import { createMemo, createResource, createSignal, For, Show, type Component } f
 import { api, type Question, type RepoStatus, type Round } from "./api";
 import { slugOf } from "./Classifier";
 import type { Toast } from "./Classifier";
+import { createCached } from "./swr";
 
 /** Review view (spec §4.4): question queue, round timeline per doc, pending reconciliations. */
 export const ReviewView: Component<{
@@ -10,8 +11,8 @@ export const ReviewView: Component<{
   onOpenDoc: (doc: string) => void;
   toast: (t: Toast | null) => void;
 }> = (p) => {
-  const [questions, { refetch: refetchQ }] = createResource(() => p.github, api.listQuestions);
-  const [status] = createResource(() => p.github, api.repoStatus);
+  const [questions, { refetch: refetchQ }] = createCached(() => `questions:${p.github}`, () => api.listQuestions(p.github));
+  const [status] = createCached(() => `status:${p.github}`, () => api.repoStatus(p.github));
   const [showClosed, setShowClosed] = createSignal(false);
 
   const open = createMemo(() => (questions() ?? []).filter((q) => q.status === "open").sort((a, b) => lvl(b.materiality) - lvl(a.materiality)));
