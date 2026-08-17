@@ -548,6 +548,8 @@ mod tests {
         RepoConfig {
             github: "o/n".into(),
             remote: "https://github.com/o/n.git".into(),
+            kind: Default::default(),
+            source_dir: None,
             default_branch: "main".into(),
             local_path: "/tmp/x".into(),
             tracked: vec![],

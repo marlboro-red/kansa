@@ -28,6 +28,8 @@ export type Toast = { kind: "error" | "info"; text: string };
 
 type Props = {
   github: string;
+  /** Display name (folder name for local repos). */
+  label?: string;
   doc: string;
   /** Land on this span (click-through from the inventory). */
   initialSpan?: string;
@@ -438,7 +440,7 @@ export const Classifier: Component<Props> = (p) => {
       <header class="topbar">
         <div class="crumb">
           <button class="ghost" onClick={p.onBack} title="Back to repo">←</button>
-          <span>{p.github}</span>
+          <span>{p.label ?? p.github}</span>
           <span class="sep">/</span>
           <span class="doc">{p.doc}</span>
           <Show when={isPr()}><span class="chip pr">PR #{(p.context as { pr: number }).pr}</span></Show>

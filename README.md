@@ -44,7 +44,8 @@ CLI mirrors the app (same core ops):
 
 ```sh
 kansa repo add owner/name                    # clone (bare, via gh/git) + create store
-kansa repo add acme/local --url file:///path # local repo, e.g. for testing
+kansa repo add-local /path/to/folder         # a plain folder of markdown — no GitHub, no gh needed
+kansa repo add acme/local --url file:///path # local git repo, e.g. for testing
 kansa doc list -r owner/name
 kansa doc track -r owner/name docs/hld.md
 kansa spans -r owner/name -d docs/hld.md --residue

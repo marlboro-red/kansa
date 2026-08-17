@@ -496,3 +496,117 @@ mod tests {
         assert!(head_sha(&again, "main").is_ok());
     }
 }
+
+// ---------- local folders (no GitHub) ----------
+
+/// Import a folder's markdown files as a commit on `refs/remotes/origin/<branch>` (and
+/// `refs/heads/<branch>`) of the bare repo, without a worktree or system git. Returns true if a
+/// new commit was created (something changed). Skips `.git`, `node_modules`, `target`, and
+/// hidden directories.
+pub fn import_folder(repo: &Repository, dir: &Path, branch: &str) -> Result<bool> {
+    let mut files: Vec<(String, Vec<u8>)> = vec![];
+    collect_markdown(dir, dir, &mut files)?;
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    // Build a nested tree from the flat path list.
+    let tree_oid = build_tree(repo, &files)?;
+    let refname = branch_ref(branch);
+    let parent = repo
+        .find_reference(&refname)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok());
+    if let Some(p) = &parent {
+        if p.tree_id() == tree_oid {
+            return Ok(false);
+        }
+    }
+    let tree = repo.find_tree(tree_oid)?;
+    let sig =
+        git2::Signature::now("kansa", "kansa@local").map_err(|e| anyhow!("signature: {e}"))?;
+    let parents: Vec<&git2::Commit> = parent.iter().collect();
+    let msg = format!(
+        "import {} markdown file(s) from {}",
+        files.len(),
+        dir.display()
+    );
+    let oid = repo.commit(None, &sig, &sig, &msg, &tree, &parents)?;
+    repo.reference(&refname, oid, true, "kansa import")?;
+    repo.reference(&format!("refs/heads/{branch}"), oid, true, "kansa import")?;
+    if repo.find_reference("refs/remotes/origin/HEAD").is_err() {
+        let _ = repo.reference_symbolic("refs/remotes/origin/HEAD", &refname, true, "kansa import");
+    }
+    Ok(true)
+}
+
+fn collect_markdown(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) -> Result<()> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        let path = e.path();
+        let name = e.file_name().to_string_lossy().into_owned();
+        let ft = e.file_type()?;
+        if ft.is_dir() {
+            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist"
+            {
+                continue;
+            }
+            collect_markdown(root, &path, out)?;
+        } else if ft.is_file() {
+            let lower = name.to_ascii_lowercase();
+            if lower.ends_with(".md") || lower.ends_with(".markdown") {
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                out.push((rel, std::fs::read(&path)?));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn build_tree(repo: &Repository, files: &[(String, Vec<u8>)]) -> Result<git2::Oid> {
+    // Recursive builder over path components.
+    fn build(repo: &Repository, prefix: &str, files: &[(String, Vec<u8>)]) -> Result<git2::Oid> {
+        let mut tb = repo.treebuilder(None)?;
+        let mut i = 0;
+        while i < files.len() {
+            let rest = &files[i].0[prefix.len()..];
+            match rest.find('/') {
+                None => {
+                    let oid = repo.blob(&files[i].1)?;
+                    tb.insert(rest, oid, 0o100644)?;
+                    i += 1;
+                }
+                Some(k) => {
+                    let dirname = &rest[..k];
+                    let sub_prefix = format!("{prefix}{dirname}/");
+                    let mut j = i;
+                    while j < files.len() && files[j].0.starts_with(&sub_prefix) {
+                        j += 1;
+                    }
+                    let sub = build(repo, &sub_prefix, &files[i..j])?;
+                    tb.insert(dirname, sub, 0o040000)?;
+                    i = j;
+                }
+            }
+        }
+        Ok(tb.write()?)
+    }
+    build(repo, "", files)
+}
+
+/// Create (or open) the private bare repo backing a local folder.
+pub fn open_local_backing(dest: &Path) -> Result<Repository> {
+    if dest.join("HEAD").exists() {
+        return Repository::open_bare(dest).with_context(|| format!("opening {}", dest.display()));
+    }
+    std::fs::create_dir_all(dest)?;
+    let repo = Repository::init_bare(dest)?;
+    // A nominal origin so code that inspects the remote keeps working.
+    let _ = repo.remote("origin", "local://folder");
+    Ok(repo)
+}

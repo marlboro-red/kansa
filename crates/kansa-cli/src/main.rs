@@ -119,6 +119,8 @@ enum RepoCmd {
         #[arg(long)]
         url: Option<String>,
     },
+    /// Register a local folder of markdown (no GitHub needed).
+    AddLocal { path: PathBuf },
     /// List registered repos.
     List,
     /// Fetch origin and snapshot changed tracked docs.
@@ -357,6 +359,18 @@ fn main() -> Result<()> {
                         "registered {} (default branch {})\nstore: {}",
                         c.github,
                         c.default_branch,
+                        ws.store.root().display()
+                    )
+                })
+            }
+            RepoCmd::AddLocal { path } => {
+                let ws = ops::register_local(&path)?;
+                let cfg = ws.store.repo()?;
+                out(json, &cfg, |c| {
+                    format!(
+                        "registered local folder {} as {}\nstore: {}",
+                        c.source_dir.clone().unwrap_or_default(),
+                        c.github,
                         ws.store.root().display()
                     )
                 })

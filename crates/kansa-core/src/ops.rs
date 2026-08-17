@@ -55,6 +55,10 @@ pub struct RepoSummary {
     pub store_dir: String,
     pub tracked: Vec<String>,
     pub last_fetch: Option<String>,
+    #[serde(default)]
+    pub kind: RepoKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_dir: Option<String>,
 }
 
 pub fn list_registered() -> Result<Vec<RepoSummary>> {
@@ -65,6 +69,8 @@ pub fn list_registered() -> Result<Vec<RepoSummary>> {
             store_dir: store_dir_for(&home, &c.github)
                 .to_string_lossy()
                 .into_owned(),
+            kind: c.kind,
+            source_dir: c.source_dir,
             github: c.github,
             default_branch: c.default_branch,
             tracked: c.tracked.into_iter().map(|t| t.path).collect(),
@@ -99,7 +105,54 @@ pub fn register_repo_from_url(home: &Path, slug: &str, url: &str) -> Result<Work
             &RepoConfig {
                 github: slug.to_string(),
                 remote: url.to_string(),
+                kind: Default::default(),
+                source_dir: None,
                 default_branch,
+                local_path: clone_dir.to_string_lossy().replace('\\', "/"),
+                tracked: vec![],
+                registered_at: now(),
+                last_fetch: Some(now()),
+            },
+        )?
+    };
+    Ok(Workspace { store, git })
+}
+
+/// Register a local folder (no GitHub): kansa keeps a private git history of its markdown
+/// files under `clones/`, so snapshots, refresh and reconciliation work exactly as for repos.
+pub fn register_local(dir: &Path) -> Result<Workspace> {
+    register_local_in(&kansa_home()?, dir)
+}
+
+pub fn register_local_in(home: &Path, dir: &Path) -> Result<Workspace> {
+    let dir = dir
+        .canonicalize()
+        .with_context(|| format!("folder {} not found", dir.display()))?;
+    if !dir.is_dir() {
+        bail!("{} is not a folder", dir.display());
+    }
+    let name = dir
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "folder".into());
+    // Stable, unique slug: local/<name>-<hash of path>
+    let h = crate::snapshot::content_hash(&dir.to_string_lossy());
+    let slug = format!("local/{}-{}", slugify(&name, 24), &h[..6]);
+    let store_dir = store_dir_for(home, &slug);
+    let clone_dir = clone_dir_for(home, &slug);
+    let git = repo::open_local_backing(&clone_dir)?;
+    repo::import_folder(&git, &dir, "main")?;
+    let store = if store_dir.join("repo.yaml").exists() {
+        Store::open(&store_dir)?
+    } else {
+        Store::init(
+            &store_dir,
+            &RepoConfig {
+                github: slug.clone(),
+                remote: format!("file://{}", dir.to_string_lossy().replace('\\', "/")),
+                kind: RepoKind::Local,
+                source_dir: Some(dir.to_string_lossy().replace('\\', "/")),
+                default_branch: "main".into(),
                 local_path: clone_dir.to_string_lossy().replace('\\', "/"),
                 tracked: vec![],
                 registered_at: now(),
@@ -198,7 +251,13 @@ pub struct DocChange {
 /// (`ui~repo-refresh~1`). Pointers advance only when nothing is classified yet; otherwise a
 /// reconciliation is computed and stored as pending (`obj~anchor~1`).
 pub fn refresh(ws: &Workspace) -> Result<Vec<DocChange>> {
-    repo::fetch(&ws.git)?;
+    let cfg0 = ws.store.repo()?;
+    match (cfg0.kind, &cfg0.source_dir) {
+        (RepoKind::Local, Some(dir)) => {
+            repo::import_folder(&ws.git, Path::new(dir), &cfg0.default_branch)?;
+        }
+        _ => repo::fetch(&ws.git)?,
+    }
     let _l = ws.store.lock()?;
     let mut cfg = ws.store.repo()?;
     cfg.last_fetch = Some(now());
@@ -1029,6 +1088,9 @@ pub struct PrSummary {
 
 pub fn list_prs(ws: &Workspace) -> Result<Vec<PrSummary>> {
     let cfg = ws.store.repo()?;
+    if cfg.kind == RepoKind::Local {
+        return Ok(vec![]);
+    }
     let prs = repo::list_prs(&cfg.github)?;
     Ok(prs
         .into_iter()
@@ -2495,4 +2557,76 @@ pub fn pr_docs_cached(ws: &Workspace, pr: u64, force: bool) -> Result<Cached<Vec
         force,
         move |w| pr_docs(w, pr),
     )
+}
+
+#[cfg(test)]
+mod local_tests {
+    use super::*;
+
+    #[test]
+    fn local_folder_register_track_edit_refresh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join("my docs");
+        std::fs::create_dir_all(folder.join("sub")).unwrap();
+        std::fs::write(
+            folder.join("hld.md"),
+            "# H\n\nThe system shall do A. Context here.\n",
+        )
+        .unwrap();
+        std::fs::write(folder.join("sub/notes.md"), "Some notes.\n").unwrap();
+        std::fs::write(folder.join("ignore.txt"), "not markdown").unwrap();
+        let home = tmp.path().join("home");
+        let ws = register_local_in(&home, &folder).unwrap();
+        let cfg = ws.store.repo().unwrap();
+        assert_eq!(cfg.kind, RepoKind::Local);
+        assert!(cfg.github.starts_with("local/my-docs-"));
+        let docs = list_docs(&ws).unwrap();
+        assert_eq!(
+            docs.iter().map(|d| d.path.as_str()).collect::<Vec<_>>(),
+            vec!["hld.md", "sub/notes.md"]
+        );
+        track_doc(&ws, "hld.md").unwrap();
+        let ctx = ws.default_context().unwrap();
+        let v = doc_view(&ws, &ctx, "hld.md").unwrap();
+        let a = v
+            .snapshot
+            .spans
+            .iter()
+            .find(|s| s.text.starts_with("The system shall do A"))
+            .unwrap()
+            .id
+            .clone();
+        create_req(
+            &ws,
+            &ctx,
+            "hld.md",
+            &[a],
+            NewReq {
+                statement: "The system shall do A.",
+                slug: Some("do-a"),
+                pattern: None,
+                rating: None,
+                owner: None,
+            },
+            "cj",
+        )
+        .unwrap();
+        // no change → no import commit, refresh reports nothing
+        assert!(refresh(&ws).unwrap().is_empty());
+        // edit the file → refresh detects change and produces a pending reconciliation
+        std::fs::write(
+            folder.join("hld.md"),
+            "# H\n\nThe system shall do A and B. Context here.\n",
+        )
+        .unwrap();
+        let ch = refresh(&ws).unwrap();
+        assert_eq!(ch.len(), 1);
+        assert!(!ch[0].advanced);
+        assert!(doc_view(&ws, &ctx, "hld.md").unwrap().pending.is_some());
+        // re-registering the same folder reuses the store
+        let ws2 = register_local_in(&home, &folder).unwrap();
+        assert_eq!(ws2.store.repo().unwrap().github, cfg.github);
+        assert!(list_prs(&ws2).unwrap().is_empty());
+        assert_eq!(list_repos(&home).unwrap().len(), 1);
+    }
 }

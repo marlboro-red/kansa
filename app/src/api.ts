@@ -9,6 +9,16 @@ const BRIDGE = (import.meta.env.VITE_KANSA_BRIDGE as string | undefined) ?? "htt
 
 export const transport: "tauri" | "http" = inTauri ? "tauri" : "http";
 
+/** Folder picker: native dialog in Tauri; a plain path prompt in the browser harness. */
+export async function pickFolder(): Promise<string | null> {
+  if (inTauri) {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const r = await open({ directory: true, multiple: false, title: "Choose a folder of markdown" });
+    return typeof r === "string" ? r : null;
+  }
+  return window.prompt("Folder path (browser dev mode):") || null;
+}
+
 async function call<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
   if (inTauri) {
     const { invoke } = await import("@tauri-apps/api/core");
@@ -32,6 +42,8 @@ export type RepoSummary = {
   store_dir: string;
   tracked: string[];
   last_fetch: string | null;
+  kind?: "github" | "local";
+  source_dir?: string | null;
 };
 
 export type DocEntry = { path: string; tracked: boolean };
@@ -218,6 +230,7 @@ export const api = {
   kansaHome: () => call<string>("kansa_home"),
   listRepos: () => call<RepoSummary[]>("list_repos"),
   registerRepo: (github: string) => call<RepoSummary>("register_repo", { github }),
+  registerLocal: (path: string) => call<RepoSummary>("register_local", { path }),
   listDocs: (github: string) => call<DocEntry[]>("list_docs", { github }),
   trackDoc: (github: string, path: string) =>
     call<{ doc: string; sha: string; spans: number }>("track_doc", { github, path }),

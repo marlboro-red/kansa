@@ -55,6 +55,7 @@ pub const COMMANDS: &[&str] = &[
     "kansa_home",
     "list_repos",
     "register_repo",
+    "register_local",
     "list_docs",
     "track_doc",
     "untrack_doc",
@@ -112,6 +113,22 @@ pub fn call(name: &str, args: &Value) -> Result<Value> {
             let cfg = ws.store.repo()?;
             j(ops::RepoSummary {
                 store_dir: ws.store.root().to_string_lossy().into_owned(),
+                kind: cfg.kind,
+                source_dir: cfg.source_dir,
+                github: cfg.github,
+                default_branch: cfg.default_branch,
+                tracked: cfg.tracked.into_iter().map(|t| t.path).collect(),
+                last_fetch: cfg.last_fetch.map(|t| t.to_string()),
+            })
+        }
+        "register_local" => {
+            let dir: String = arg(args, "path")?;
+            let ws = ops::register_local(std::path::Path::new(&dir))?;
+            let cfg = ws.store.repo()?;
+            j(ops::RepoSummary {
+                store_dir: ws.store.root().to_string_lossy().into_owned(),
+                kind: cfg.kind,
+                source_dir: cfg.source_dir,
                 github: cfg.github,
                 default_branch: cfg.default_branch,
                 tracked: cfg.tracked.into_iter().map(|t| t.path).collect(),

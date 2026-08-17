@@ -12,6 +12,7 @@ type GroupBy = "none" | "group" | "doc" | "status";
 /** Repo-wide inventory (spec §4.2): every requirement, filters, group lens, bulk actions, export. */
 export const InventoryView: Component<{
   github: string;
+  label?: string;
   onOpenAnchor: (doc: string, spanId: string) => void;
   toast: (t: Toast | null) => void;
 }> = (p) => {
@@ -136,7 +137,7 @@ export const InventoryView: Component<{
     <div class="invview">
       <header class="invview-head">
         <div>
-          <h1>Inventory <span class="muted">· {p.github}</span></h1>
+          <h1>Inventory <span class="muted">· {p.label ?? p.github}</span></h1>
           <Show when={status()}>
             {(s) => (
               <p class="rollup">

@@ -330,11 +330,25 @@ pub struct TrackedDoc {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RepoKind {
+    #[default]
+    Github,
+    /// A local folder; kansa keeps a private git history of its markdown files.
+    Local,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RepoConfig {
-    /// `owner/name`
+    /// `owner/name` for GitHub; `local/<name>` for folders.
     pub github: String,
     pub remote: String,
+    #[serde(default)]
+    pub kind: RepoKind,
+    /// Absolute path of the source folder (local repos).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_dir: Option<String>,
     pub default_branch: String,
     /// Local clone location (absolute).
     pub local_path: String,

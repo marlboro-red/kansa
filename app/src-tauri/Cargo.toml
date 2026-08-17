@@ -15,4 +15,5 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 kansa-core = { path = "../../crates/kansa-core" }
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
 serde_json.workspace = true

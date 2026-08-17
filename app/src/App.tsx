@@ -1,5 +1,5 @@
 import { createResource, createSignal, ErrorBoundary, For, Show, type Component } from "solid-js";
-import { api, type RepoSummary } from "./api";
+import { api, pickFolder, type RepoSummary } from "./api";
 import { Classifier, type Toast } from "./Classifier";
 import { InventoryView } from "./InventoryView";
 import { ReviewView } from "./ReviewView";
@@ -52,6 +52,12 @@ const App: Component = () => {
             const r = await run(`cloning ${gh}`, () => api.registerRepo(gh));
             if (r) { await refetchRepos(); setRoute({ kind: "repo", github: r.github }); }
           }}
+          onAddLocal={async () => {
+            const dir = await pickFolder();
+            if (!dir) return;
+            const r = await run(`importing ${dir}`, () => api.registerLocal(dir));
+            if (r) { await refetchRepos(); setRoute({ kind: "repo", github: r.github }); }
+          }}
         />
         <nav class="repos">
           <Show when={repos()} fallback={<p class="muted" style={{ padding: "0 10px" }}>loading…</p>}>
@@ -59,8 +65,10 @@ const App: Component = () => {
               {(r) => (
                 <>
                   <button class="repo" classList={{ active: currentGithub() === r.github && !currentDoc() }} onClick={() => setRoute({ kind: "repo", github: r.github })}>
-                    <span class="name" title={r.github}><span class="owner">{r.github.split("/")[0]}/</span>{r.github.split("/").slice(1).join("/")}</span>
-                    <span class="meta">{r.default_branch} · {r.tracked.length} tracked</span>
+                    <Show when={r.kind === "local"} fallback={<span class="name" title={r.github}><span class="owner">{r.github.split("/")[0]}/</span>{r.github.split("/").slice(1).join("/")}</span>}>
+                      <span class="name" title={r.source_dir ?? ""}><span class="owner">folder/</span>{(r.source_dir ?? "").split(/[\\/]/).filter(Boolean).pop()}</span>
+                    </Show>
+                    <span class="meta">{r.kind === "local" ? "local folder" : r.default_branch} · {r.tracked.length} tracked</span>
                   </button>
                   <Show when={currentGithub() === r.github}>
                     <DocNav repo={r} current={currentDoc()} onOpen={(d) => setRoute({ kind: "doc", github: r.github, doc: d })} />
@@ -109,6 +117,7 @@ const App: Component = () => {
           {(gh) => (
             <InventoryView
               github={gh()}
+              label={repoLabel(repos()?.find((x) => x.github === gh()), gh())}
               onOpenAnchor={(doc, span) => setRoute({ kind: "doc", github: gh(), doc, span })}
               toast={showToast}
             />
@@ -118,6 +127,7 @@ const App: Component = () => {
           {(gh) => (
             <ReviewView
               github={gh()}
+              label={repoLabel(repos()?.find((x) => x.github === gh()), gh())}
               onOpenAnchor={(doc, span) => setRoute({ kind: "doc", github: gh(), doc, span })}
               onOpenDoc={(doc) => setRoute({ kind: "doc", github: gh(), doc })}
               toast={showToast}
@@ -142,7 +152,7 @@ const App: Component = () => {
         <Show when={route().kind === "doc" && route()} keyed>
           {(r) => r.kind === "doc" && (
             <ErrorBoundary fallback={(e) => <div class="empty"><h1>Something broke</h1><pre class="mono" style={{ "white-space": "pre-wrap" }}>{String(e?.stack ?? e)}</pre></div>}>
-              <Classifier github={r.github} doc={r.doc} initialSpan={r.span} context={r.context} onBack={() => setRoute({ kind: "repo", github: r.github })} toast={showToast} />
+              <Classifier github={r.github} label={repoLabel(repos()?.find((x) => x.github === r.github), r.github)} doc={r.doc} initialSpan={r.span} context={r.context} onBack={() => setRoute({ kind: "repo", github: r.github })} toast={showToast} />
             </ErrorBoundary>
           )}
         </Show>
@@ -150,6 +160,13 @@ const App: Component = () => {
     </div>
   );
 };
+
+/** Human label for a repo: `owner/name` or the folder name for local folders. */
+export function repoLabel(r?: RepoSummary, fallback = ""): string {
+  if (!r) return fallback;
+  if (r.kind === "local") return (r.source_dir ?? "").split(/[\\/]/).filter(Boolean).pop() ?? fallback;
+  return r.github;
+}
 
 function loadRoute(): Route {
   try { const r = JSON.parse(localStorage.getItem("kansa.route") ?? ""); if (r && typeof r.kind === "string") return r as Route; } catch {}
@@ -230,16 +247,21 @@ const PrPane: Component<{
   );
 };
 
-const RepoAdd: Component<{ disabled: boolean; onAdd: (gh: string) => void }> = (p) => {
+const RepoAdd: Component<{ disabled: boolean; onAdd: (gh: string) => void; onAddLocal: () => void }> = (p) => {
   const [value, setValue] = createSignal("");
   return (
-    <form
-      class="repo-add"
-      onSubmit={(e) => { e.preventDefault(); const v = value().trim(); if (v) { p.onAdd(v); setValue(""); } }}
-    >
-      <input placeholder="owner/name" value={value()} onInput={(e) => setValue(e.currentTarget.value)} disabled={p.disabled} spellcheck={false} />
-      <button type="submit" disabled={p.disabled || !value().trim()}>Add</button>
-    </form>
+    <div class="repo-add-wrap">
+      <form
+        class="repo-add"
+        onSubmit={(e) => { e.preventDefault(); const v = value().trim(); if (v) { p.onAdd(v); setValue(""); } }}
+      >
+        <input placeholder="owner/name" value={value()} onInput={(e) => setValue(e.currentTarget.value)} disabled={p.disabled} spellcheck={false} />
+        <button type="submit" disabled={p.disabled || !value().trim()}>Add</button>
+      </form>
+      <button class="ghost local-btn" onClick={p.onAddLocal} disabled={p.disabled} title="Register a folder of markdown files — no GitHub needed">
+        or open a local folder…
+      </button>
+    </div>
   );
 };
 
@@ -301,10 +323,12 @@ const RepoPane: Component<{
       </Show>
       <header class="pane-head">
         <div>
-          <h1>{p.github}</h1>
-          <p class="muted">{p.repo?.default_branch} · last fetch {p.repo?.last_fetch?.slice(0, 16) ?? "—"}</p>
+          <Show when={p.repo?.kind === "local"} fallback={<h1>{p.github}</h1>}>
+            <h1>{(p.repo?.source_dir ?? "").split(/[\\/]/).filter(Boolean).pop()} <span class="muted" style={{ "font-weight": 400 }}>· local folder</span></h1>
+          </Show>
+          <p class="muted">{p.repo?.kind === "local" ? <span class="mono">{p.repo?.source_dir}</span> : p.repo?.default_branch} · last {p.repo?.kind === "local" ? "import" : "fetch"} {p.repo?.last_fetch?.slice(0, 16) ?? "—"}</p>
         </div>
-        <button onClick={refresh}>Refresh</button>
+        <button onClick={refresh} title={p.repo?.kind === "local" ? "Re-read the folder and pick up edits" : "Fetch from GitHub"}>{p.repo?.kind === "local" ? "Re-import" : "Refresh"}</button>
       </header>
 
       <section>
@@ -360,6 +384,7 @@ const RepoPane: Component<{
         </Show>
       </section>
 
+      <Show when={p.repo?.kind !== "local"}>
       <section>
         <h2>
           Open pull requests <span class="muted" style={{ "text-transform": "none", "letter-spacing": 0 }}>{prs() ? `${prsFiltered().length}/${prs()!.length}` : ""}</span>
@@ -393,7 +418,7 @@ const RepoPane: Component<{
           </Show>
         </Show>
       </section>
-
+      </Show>
     </div>
   );
 };

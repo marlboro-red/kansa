@@ -192,6 +192,8 @@ mod tests {
         let cfg = RepoConfig {
             github: "o/n".into(),
             remote: "r".into(),
+            kind: Default::default(),
+            source_dir: None,
             default_branch: "main".into(),
             local_path: "x".into(),
             tracked: vec![],

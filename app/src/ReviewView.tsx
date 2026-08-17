@@ -7,6 +7,7 @@ import { createCached } from "./swr";
 /** Review view (spec §4.4): question queue, round timeline per doc, pending reconciliations. */
 export const ReviewView: Component<{
   github: string;
+  label?: string;
   onOpenAnchor: (doc: string, span: string) => void;
   onOpenDoc: (doc: string) => void;
   toast: (t: Toast | null) => void;
@@ -22,7 +23,7 @@ export const ReviewView: Component<{
     <div class="review">
       <header class="invview-head">
         <div>
-          <h1>Review <span class="muted">· {p.github}</span></h1>
+          <h1>Review <span class="muted">· {p.label ?? p.github}</span></h1>
           <p class="rollup muted">{open().length} open question{open().length === 1 ? "" : "s"} · {closed().length} resolved</p>
         </div>
       </header>
