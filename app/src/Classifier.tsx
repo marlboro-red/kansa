@@ -384,6 +384,25 @@ export const Classifier: Component<Props> = (p) => {
     return true;
   }
 
+  // ---- doc zoom: ctrl/⌘ + wheel over the page, ctrl/⌘ + `=`/`-`/`0` (`ui~doc-zoom~1`).
+  // Only the prose scales — the margin rail keeps its size so marks stay legible; the rail
+  // re-measures itself through its ResizeObserver when the text reflows.
+  const [zoom, setZoomSignal] = createSignal(storedZoom());
+  const setZoom = (z: number) => {
+    const v = Math.min(2.5, Math.max(0.6, Math.round(z * 1000) / 1000));
+    if (v === zoom()) return;
+    setZoomSignal(v);
+    try { v === 1 ? localStorage.removeItem(ZOOM_KEY) : localStorage.setItem(ZOOM_KEY, String(v)); } catch { /* ignore */ }
+    setTick((n) => n + 1); // the residue rail's viewport box is derived from scrollHeight
+    // Reflow moves everything; keep the sentence under the cursor where the reader left it.
+    requestAnimationFrame(() => scrollTo(cursor()));
+  };
+  function onWheel(e: WheelEvent) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault(); // otherwise the webview zooms the whole app
+    setZoom(zoom() * Math.exp(-e.deltaY * 0.002));
+  }
+
   // ---- keyboard
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null;
@@ -392,6 +411,12 @@ export const Classifier: Component<Props> = (p) => {
       return;
     }
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && ["=", "+", "-", "_", "0"].includes(e.key)) {
+      e.preventDefault();
+      if (e.key === "0") setZoom(1);
+      else setZoom(zoom() * (e.key === "-" || e.key === "_" ? 1 / 1.1 : 1.1));
+      return;
+    }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key;
     const ext = e.shiftKey;
@@ -431,6 +456,11 @@ export const Classifier: Component<Props> = (p) => {
   }
   onMount(() => window.addEventListener("keydown", onKey));
   onCleanup(() => window.removeEventListener("keydown", onKey));
+  onMount(() => {
+    // Solid's JSX handler would be registered passive by the browser for wheel; this is not.
+    docEl?.addEventListener("wheel", onWheel, { passive: false });
+    onCleanup(() => docEl?.removeEventListener("wheel", onWheel));
+  });
 
   // On first load land on the first unclassified prose span.
   let landed = false;
@@ -497,7 +527,7 @@ export const Classifier: Component<Props> = (p) => {
 
       <div class="work">
         <div class="docwrap">
-          <div class="docscroll" ref={docEl} onScroll={() => setTick((n) => n + 1)}>
+          <div class="docscroll" ref={docEl} style={{ "--doc-zoom": String(zoom()) }} onScroll={() => setTick((n) => n + 1)}>
             <Show when={view()} fallback={<div class="empty muted">loading…</div>}>
               {(v) => (
                 <DocBody
@@ -583,6 +613,9 @@ export const Classifier: Component<Props> = (p) => {
           <span class="muted">· {meter().mapped} req · {meter().non_normative} ctx · {meter().questioned} q</span>
         </div>
         <div class="keys">
+          <Show when={zoom() !== 1}>
+            <button class="zoomchip" onClick={() => setZoom(1)} title="Ctrl/⌘ + scroll to zoom · click to reset (Ctrl/⌘ 0)">{Math.round(zoom() * 100)}%</button>
+          </Show>
           <span><kbd>u</kbd> next</span>
           <span><kbd>r</kbd> requirement</span>
           <span><kbd>c</kbd> context</span>
@@ -620,6 +653,7 @@ export const Classifier: Component<Props> = (p) => {
               <tr><td><kbd>e</kbd></td><td>show linked requirement</td></tr>
               <tr><td><kbd>g</kbd></td><td>add the linked requirement to a group</td></tr>
               <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>top / bottom</td></tr>
+              <tr><td><kbd>ctrl</kbd>+scroll</td><td>zoom the page text (also ctrl <kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd>)</td></tr>
               <tr><td><kbd>esc</kbd></td><td>clear selection / highlight</td></tr>
             </tbody>
           </table>
@@ -630,6 +664,13 @@ export const Classifier: Component<Props> = (p) => {
 };
 
 const [tick, setTick] = createSignal(0);
+const ZOOM_KEY = "kansa.docZoom";
+function storedZoom(): number {
+  try {
+    const z = Number(localStorage.getItem(ZOOM_KEY));
+    return Number.isFinite(z) && z >= 0.6 && z <= 2.5 ? z : 1;
+  } catch { return 1; }
+}
 const EMPTY = new Set<string>();
 const HTML_CACHE = new Map<string, string>();
 const EMPTY_MAP = new Map<string, Proposal>();

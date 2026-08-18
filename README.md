@@ -74,4 +74,5 @@ kansa repo refresh -r owner/name             # fetch; changed docs go to reconci
 ## Keyboard (classifier)
 
 `u` next unclassified · `n`/`p` (or `j`/`k`, arrows) move · `⇧`+move extend · `r` requirement (attach/create) · `c` context ·
-`q` question · `x` clear / reject proposal · `⏎` accept proposal · `g` group · `e` show linked requirement · `?` all keys
+`q` question · `x` clear / reject proposal · `⏎` accept proposal · `g` group · `e` show linked requirement · `?` all keys ·
+`ctrl`/`⌘`+scroll (or `+`/`-`/`0`) zoom the page text

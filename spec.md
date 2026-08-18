@@ -174,9 +174,10 @@ Two panes + a status bar.
 - `ui~bidirectional~1` — Selecting a requirement shall highlight all its source spans in the document (scrolling to the first); selecting a span shall highlight its linked requirement(s) in the panel. Provenance is one click in both directions, always.
 - `ui~grouping~1` — The user shall be able to select a contiguous run of sentences (shift-click / shift+arrows) and classify the group as one unit — one requirement may anchor to multiple sentences and one sentence to multiple requirements (n:m).
 - `ui~residue-nav~1` — A single key (`u`) shall jump to the next unclassified sentence; the systematic pass is: `u`, classify, repeat until the meter reads zero.
+- `ui~doc-zoom~1` — `ctrl`/`⌘` + scroll over the document (and `ctrl`/`⌘` with `+`/`-`/`0`) shall scale the prose between 60% and 250%, persisted per machine; the app chrome and the margin rail keep their size so marks stay legible, and the rail re-measures on reflow. The gesture shall never fall through to the webview's own zoom.
 
 **Keyboard map (primary; mouse is secondary):**
-`u` next unclassified · `n`/`p` next/prev sentence · `r` map to requirement (opens quick-create/attach with agent-drafted EARS statement when available) · `c` mark non-normative · `q` flag as question (materiality + readings dialog) · `e` edit linked requirement · `g` group quick-assign · `enter` confirm agent proposal · `x` reject agent proposal · `/` search.
+`ctrl`+scroll zoom · `u` next unclassified · `n`/`p` next/prev sentence · `r` map to requirement (opens quick-create/attach with agent-drafted EARS statement when available) · `c` mark non-normative · `q` flag as question (materiality + readings dialog) · `e` edit linked requirement · `g` group quick-assign · `enter` confirm agent proposal · `x` reject agent proposal · `/` search.
 
 ### 4.2 Inventory view
 

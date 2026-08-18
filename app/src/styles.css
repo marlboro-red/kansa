@@ -193,22 +193,24 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .docscroll::-webkit-scrollbar { width: 8px; }
 .docscroll::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
 .docscroll::-webkit-scrollbar-track { background: transparent; }
-.docinner { max-width: 74ch; margin: 0 auto; padding-left: 130px; position: relative; font-family: var(--serif); font-size: 16px; line-height: 1.6; color: var(--ink); }
+/* Prose scale: `--doc-zoom` is set on .docscroll by ctrl+scroll; every size below is em-relative
+   so one variable moves the whole page, while the fixed 130px margin rail keeps marks legible. */
+.docinner { max-width: 74ch; margin: 0 auto; padding-left: 130px; position: relative; font-family: var(--serif); font-size: calc(16px * var(--doc-zoom, 1)); line-height: 1.6; color: var(--ink); }
 .docinner p { margin: 0 0 1em; }
 .docinner h1.h, .docinner h2.h, .docinner h3.h, .docinner h4.h { font-family: var(--serif); font-weight: 650; letter-spacing: -0.005em; margin: 1.6em 0 0.5em; line-height: 1.25; text-transform: none; color: var(--ink); }
-.docinner h1.h { font-size: 26px; }
-.docinner h2.h { font-size: 21px; }
-.docinner h3.h { font-size: 17.5px; }
-.docinner h4.h { font-size: 16px; }
+.docinner h1.h { font-size: 1.625em; }
+.docinner h2.h { font-size: 1.3125em; }
+.docinner h3.h { font-size: 1.09375em; }
+.docinner h4.h { font-size: 1em; }
 .docinner ul { margin: 0 0 1em; padding-left: 1.3em; }
 .docinner li { margin: 0.15em 0; }
-.docinner .md-table { display: grid; grid-template-columns: 1fr; margin: 0 0 1em; font-size: 14.5px; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.docinner .md-table { display: grid; grid-template-columns: 1fr; margin: 0 0 1em; font-size: 0.90625em; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
 .docinner .md-table .trow { border-bottom: 1px solid var(--line); }
 .docinner .md-table .trow:last-child { border-bottom: 0; }
 .docinner .md-table .trow > .sp { display: grid; grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr)); gap: 0; margin: 0; padding: 0; border-radius: 0; }
 .docinner .md-table .trow .cell { padding: 6px 10px; border-right: 1px solid var(--line); overflow-wrap: anywhere; }
 .docinner .md-table .trow .cell:last-child { border-right: 0; }
-.docinner .md-table .trow.head .cell { font-weight: 650; background: var(--panel); font-size: 13.5px; }
+.docinner .md-table .trow.head .cell { font-weight: 650; background: var(--panel); font-size: 0.931em; }
 .docinner .md-table .trow > .sp.state-unclassified, .docinner .md-table .trow > .sp.state-mapped, .docinner .md-table .trow > .sp.state-question { text-decoration: none; }
 .docinner .md-table .trow > .sp.state-unclassified .cell:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--coral) 75%, transparent); }
 .docinner .md-table .trow > .sp.state-mapped .cell:first-child { box-shadow: inset 3px 0 0 var(--jade); }
@@ -218,7 +220,7 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .docinner pre.md code.hljs { display: block; font: inherit; background: transparent; padding: 0; }
 .docinner .sp strong { font-weight: 700; }
 .docinner .sp del { color: var(--ink-3); }
-.docinner pre.md { font: 12.5px/1.5 var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; margin: 0 0 1em; white-space: pre-wrap; overflow-x: auto; }
+.docinner pre.md { font: 0.78125em/1.5 var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; margin: 0 0 1em; white-space: pre-wrap; overflow-x: auto; }
 .docinner pre.md .sp.block { padding: 0; margin: 0; }
 .docinner pre.md .sp.state-unclassified, .docinner pre.md .sp.state-mapped { text-decoration: none; }
 /* highlight.js — token colours tuned to the palette (works in both themes) */
@@ -230,7 +232,7 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .hljs-deletion { color: var(--coral); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
-.docinner .html { font: 12.5px/1.45 var(--mono); color: var(--ink-3); white-space: pre-wrap; margin: 0 0 1em; }
+.docinner .html { font: 0.78125em/1.45 var(--mono); color: var(--ink-3); white-space: pre-wrap; margin: 0 0 1em; }
 
 /* every span */
 .sp {
@@ -343,6 +345,8 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .statusbar .cov .bar .q { background: var(--violet); }
 .statusbar .cov .n-res { color: var(--coral); font-weight: 600; font-variant-numeric: tabular-nums; }
 .statusbar .cov .n-res.zero { color: var(--jade); }
+.statusbar .zoomchip { font: 11px var(--mono); color: var(--ink-2); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; cursor: pointer; }
+.statusbar .zoomchip:hover { color: var(--ink); }
 .statusbar .keys { margin-left: auto; display: flex; gap: 12px; color: var(--ink-3); white-space: nowrap; }
 .statusbar .keys span { display: inline-flex; gap: 5px; align-items: center; }
 
