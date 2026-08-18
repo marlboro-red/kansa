@@ -492,16 +492,41 @@ export const Classifier: Component<Props> = (p) => {
     onCleanup(() => docEl?.removeEventListener("wheel", onWheel));
   });
 
-  // On first load land on the first unclassified prose span.
+  // On first load: an explicit anchor wins, then the remembered scroll/selection from the last
+  // visit this session (`ui~scroll-restore~1`), then the first unclassified prose span.
   let landed = false;
-  createEffect(() => { reviewing(); landed = false; });
+  // Saves are gated on `restored`, not `landed`: the cursor effect below fires between landing
+  // and the queued restore, and without the gate its initial run (cursor 0, scroll 0) would
+  // overwrite the position we are about to restore.
+  let restored = false;
+  createEffect(() => { reviewing(); landed = false; restored = false; });
   createEffect(() => {
     if (!landed && view() && rows().length) {
       landed = true;
       const target = p.initialSpan ? rows().findIndex((r) => r.span.id === p.initialSpan) : -1;
-      queueMicrotask(() => { if (target >= 0) move(target); else nextUnclassified(0); });
+      queueMicrotask(() => {
+        restored = true;
+        if (target >= 0) return move(target);
+        const saved = viewMem.get(viewKey());
+        if (saved && docEl) {
+          // Scroll first: the cursor effect saves on setCursor and reads scrollTop as it is.
+          docEl.scrollTop = saved.top;
+          const i = saved.span ? rows().findIndex((r) => r.span.id === saved.span) : -1;
+          if (i >= 0) { setAnchor(null); setCursor(i); }
+          return;
+        }
+        nextUnclassified(0);
+      });
     }
   });
+  // Remember where the user is — the cursor's span survives snapshot changes, the scroll offset
+  // covers reading without selecting.
+  const rememberView = () => {
+    if (!restored) return;
+    const r = rows()[cursor()];
+    viewMem.set(viewKey(), { top: docEl?.scrollTop ?? 0, span: r?.span.id });
+  };
+  createEffect(() => { cursor(); rememberView(); });
 
   return (
     <div class="classifier">
@@ -564,7 +589,7 @@ export const Classifier: Component<Props> = (p) => {
             role="region"
             aria-label={`${p.doc} — classify each sentence; press ? for keyboard help`}
             style={{ "--doc-zoom": String(zoom()) }}
-            onScroll={() => setTick((n) => n + 1)}
+            onScroll={() => { setTick((n) => n + 1); rememberView(); }}
           >
             {/* `active()`, not `view()`: while reviewing a reconciliation the pane must render the
                 incoming snapshot — `rows` already come from it, so feeding DocBody the old view
@@ -710,6 +735,10 @@ export const Classifier: Component<Props> = (p) => {
 };
 
 const [tick, setTick] = createSignal(0);
+/** Scroll offset + cursor span per doc view, so leaving for the inventory (or another doc) and
+ *  coming back lands where the user was. Session-lived, like the view cache that repaints it. */
+const viewMem = new Map<string, { top: number; span?: string }>();
+
 const PANEL_KEY = "kansa.panelW";
 const DEFAULT_PANEL_W = 340;
 function storedPanelW(): number {
