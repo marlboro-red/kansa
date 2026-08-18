@@ -79,7 +79,7 @@ const QuestionCard: Component<{ q: Question; github: string; onChanged: () => vo
       <Show when={p.q.status === "open"}>
         <Show when={p.q.pending} fallback={
           <div class="answer">
-            <Show when={p.q.readings.length} fallback={<input placeholder="Answer…" value={free()} onInput={(e) => setFree(e.currentTarget.value)} />}>
+            <Show when={p.q.readings.length} fallback={<input name="answer" aria-label="Answer" placeholder="Answer…" value={free()} onInput={(e) => setFree(e.currentTarget.value)} />}>
               <div class="readings">
                 <For each={p.q.readings}>
                   {(r) => (
@@ -94,7 +94,7 @@ const QuestionCard: Component<{ q: Question; github: string; onChanged: () => vo
               </div>
             </Show>
             <div class="row">
-              <input placeholder="Note (optional) — who decided, where" value={note()} onInput={(e) => setNote(e.currentTarget.value)} />
+              <input name="answer-note" aria-label="Answer note (optional) — who decided, where" placeholder="Note (optional) — who decided, where" value={note()} onInput={(e) => setNote(e.currentTarget.value)} />
               <button
                 class="primary"
                 disabled={busy() || !answerKey()}

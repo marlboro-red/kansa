@@ -113,7 +113,7 @@ export const ReconcilePanel: Component<{
                 </div>
                 <Show when={retireFor() === v.from}>
                   <div class="retire">
-                    <input placeholder="reason (required)" value={reason()} onInput={(e) => setReason(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter" && reason().trim()) { p.onDecide(v.from, { kind: "retire", reason: reason().trim() }); setRetireFor(null); setReason(""); } }} />
+                    <input name="retire-reason" aria-label="Retire reason (required)" placeholder="reason (required)" value={reason()} onInput={(e) => setReason(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter" && reason().trim()) { p.onDecide(v.from, { kind: "retire", reason: reason().trim() }); setRetireFor(null); setReason(""); } }} />
                     <button class="primary" disabled={!reason().trim()} onClick={() => { p.onDecide(v.from, { kind: "retire", reason: reason().trim() }); setRetireFor(null); setReason(""); }}>Retire</button>
                   </div>
                 </Show>

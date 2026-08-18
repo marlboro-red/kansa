@@ -507,7 +507,7 @@ export const Classifier: Component<Props> = (p) => {
     <div class="classifier">
       <header class="topbar">
         <div class="crumb">
-          <button class="ghost" onClick={p.onBack} title="Back to repo">←</button>
+          <button class="ghost" onClick={p.onBack} title="Back to repo" aria-label="Back to repo">←</button>
           <span>{p.label ?? p.github}</span>
           <span class="sep">/</span>
           <span class="doc">{p.doc}</span>
@@ -515,7 +515,7 @@ export const Classifier: Component<Props> = (p) => {
         </div>
         <span class="spacer" />
         <Show when={(groups() ?? []).length}>
-          <select class="lens" value={groupLens() ?? ""} onChange={(e) => setGroupLens(e.currentTarget.value || null)} title="Group lens — dim sentences outside a group">
+          <select class="lens" name="group-lens" aria-label="Group lens — dim sentences outside a group" value={groupLens() ?? ""} onChange={(e) => setGroupLens(e.currentTarget.value || null)} title="Group lens — dim sentences outside a group">
             <option value="">all groups</option>
             <For each={groups()}>{(g) => <option value={slugOf(g.group.id)}>{g.group.title} ({g.group.members.length})</option>}</For>
           </select>
@@ -557,7 +557,15 @@ export const Classifier: Component<Props> = (p) => {
 
       <div class="work" style={{ "--panel-w": `${panelW()}px` }}>
         <div class="docwrap">
-          <div class="docscroll" ref={docEl} style={{ "--doc-zoom": String(zoom()) }} onScroll={() => setTick((n) => n + 1)}>
+          <div
+            class="docscroll"
+            ref={docEl}
+            tabindex="0"
+            role="region"
+            aria-label={`${p.doc} — classify each sentence; press ? for keyboard help`}
+            style={{ "--doc-zoom": String(zoom()) }}
+            onScroll={() => setTick((n) => n + 1)}
+          >
             {/* `active()`, not `view()`: while reviewing a reconciliation the pane must render the
                 incoming snapshot — `rows` already come from it, so feeding DocBody the old view
                 paints stale text against the new rows. */}
@@ -866,6 +874,7 @@ const DocBody: Component<{
           pending: pend(),
         }}
         data-sid={sp.id}
+        aria-current={p.cursor === i ? "true" : undefined}
         onMouseDown={(e) => { e.preventDefault(); p.onPick(i, e.shiftKey); }}
         title={sp.id}
         innerHTML={isText ? spanHtml(sp) : undefined}
@@ -980,6 +989,7 @@ const Rail: Component<{ rows: SpanRow[]; cursor: number; onJump: (i: number) => 
     <div
       class="rail"
       ref={el}
+      aria-hidden="true"
       onClick={(e) => {
         const r = el!.getBoundingClientRect();
         const i = Math.floor(((e.clientY - r.top) / r.height) * n());

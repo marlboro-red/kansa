@@ -74,7 +74,7 @@ export const ReqPalette: Component<{
 
   return (
     <div class="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) p.onClose(); }}>
-      <div class="dialog" role="dialog" ref={dlg} aria-label="Map to requirement">
+      <div class="dialog" role="dialog" aria-modal="true" ref={dlg} aria-label="Map to requirement">
         <div class="dhead" ref={head} title="Drag to move · double-click to reset">
           <span class="title">{creating() ? "New requirement" : "Map to requirement"}</span>
           <span class="quote" title={p.selectionText}>“{p.selectionText}”</span>
@@ -86,6 +86,8 @@ export const ReqPalette: Component<{
               <div class="dbody">
                 <input
                   ref={input}
+                  name="req-search"
+                  aria-label="Search requirements by statement or id"
                   placeholder="Search requirements by statement or id… (Tab to create new)"
                   value={query()}
                   onInput={(e) => { setQuery(e.currentTarget.value); setActive(0); }}
@@ -118,6 +120,8 @@ export const ReqPalette: Component<{
               <label>EARS statement</label>
               <textarea
                 ref={stmt}
+                name="statement"
+                aria-label="EARS statement"
                 value={statement()}
                 onInput={(e) => setStatement(e.currentTarget.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitCreate(); } }}
@@ -135,7 +139,7 @@ export const ReqPalette: Component<{
             </div>
             <div class="field">
               <label>Id slug <span class="muted" style={{ "text-transform": "none", "letter-spacing": 0 }}>(optional — derived from the statement)</span></label>
-              <input value={slug()} placeholder={slugPreview(statement())} onInput={(e) => setSlug(e.currentTarget.value.toLowerCase().replace(/[^a-z0-9-]+/g, "-"))} spellcheck={false} />
+              <input name="slug" aria-label="Id slug (optional — derived from the statement)" value={slug()} placeholder={slugPreview(statement())} onInput={(e) => setSlug(e.currentTarget.value.toLowerCase().replace(/[^a-z0-9-]+/g, "-"))} spellcheck={false} />
             </div>
           </div>
           <div class="dfoot">

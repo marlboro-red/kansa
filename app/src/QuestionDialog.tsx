@@ -37,6 +37,7 @@ export const QuestionDialog: Component<{
       <div
         class="dialog"
         role="dialog"
+        aria-modal="true"
         ref={dlg}
         aria-label="Flag as question"
         onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } }}
@@ -45,7 +46,7 @@ export const QuestionDialog: Component<{
         <div class="dbody">
           <div class="field">
             <label>Quoted prose</label>
-            <textarea value={quote()} onInput={(e) => setQuote(e.currentTarget.value)} rows={2} />
+            <textarea name="quote" aria-label="Quoted prose" value={quote()} onInput={(e) => setQuote(e.currentTarget.value)} rows={2} />
           </div>
           <div class="field">
             <label>Materiality — how much does the answer change the inventory?</label>
@@ -61,10 +62,12 @@ export const QuestionDialog: Component<{
               <For each={readings}>
                 {(r, i) => (
                   <div class="reading">
-                    <input type="radio" name="def" checked={def() === r.key} onChange={() => setDef(r.key)} title="default reading" disabled={!r.text.trim()} />
+                    <input type="radio" name="def" aria-label={`Reading ${r.key} is the default`} checked={def() === r.key} onChange={() => setDef(r.key)} title="default reading" disabled={!r.text.trim()} />
                     <span class="key">{r.key}</span>
                     <input
                       ref={i() === 0 ? first : undefined}
+                      name={`reading-${r.key}`}
+                      aria-label={`Reading ${r.key}`}
                       value={r.text}
                       placeholder={i() === 0 ? "e.g. 10-minute sliding window" : "another interpretation"}
                       onInput={(e) => setReadings(i(), "text", e.currentTarget.value)}

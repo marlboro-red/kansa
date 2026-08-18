@@ -255,7 +255,7 @@ const RepoAdd: Component<{ disabled: boolean; onAdd: (gh: string) => void; onAdd
         class="repo-add"
         onSubmit={(e) => { e.preventDefault(); const v = value().trim(); if (v) { p.onAdd(v); setValue(""); } }}
       >
-        <input placeholder="owner/name" value={value()} onInput={(e) => setValue(e.currentTarget.value)} disabled={p.disabled} spellcheck={false} />
+        <input name="repo" aria-label="GitHub repo to add (owner/name)" placeholder="owner/name" value={value()} onInput={(e) => setValue(e.currentTarget.value)} disabled={p.disabled} spellcheck={false} />
         <button type="submit" disabled={p.disabled || !value().trim()}>Add</button>
       </form>
       <button class="ghost local-btn" onClick={p.onAddLocal} disabled={p.disabled} title="Register a folder of markdown files — no GitHub needed">
@@ -336,7 +336,7 @@ const RepoPane: Component<{
           <h2>Tracked HLDs</h2>
           <span style={{ flex: 1 }} />
           <div class="trackpick">
-            <input placeholder="Track a doc… (search markdown files)" value={pick()} onInput={(e) => setPick(e.currentTarget.value)} onFocus={() => setPickOpen(true)} onBlur={() => setTimeout(() => setPickOpen(false), 150)} onKeyDown={(e) => { if (e.key === "Escape") setPickOpen(false); if (e.key === "Enter" && pickList()[0]) toggle(pickList()[0].path, false); }} />
+            <input name="trackpick" aria-label="Track a doc — search markdown files" placeholder="Track a doc… (search markdown files)" value={pick()} onInput={(e) => setPick(e.currentTarget.value)} onFocus={() => setPickOpen(true)} onBlur={() => setTimeout(() => setPickOpen(false), 150)} onKeyDown={(e) => { if (e.key === "Escape") setPickOpen(false); if (e.key === "Enter" && pickList()[0]) toggle(pickList()[0].path, false); }} />
             <Show when={pickOpen() && pickList().length}>
               <div class="matches pickmenu">
                 <For each={pickList()}>{(d) => <div class="match" onMouseDown={() => { toggle(d.path, false); setPick(""); }}><span class="mono">{d.path}</span></div>}</For>
@@ -392,7 +392,7 @@ const RepoPane: Component<{
         </h2>
         <Show when={(prs() ?? []).length}>
           <div class="prfilters">
-            <input placeholder="Search PRs — number, title, author, branch, file…" value={prQuery()} onInput={(e) => setPrQuery(e.currentTarget.value)} />
+            <input name="pr-search" aria-label="Search pull requests" placeholder="Search PRs — number, title, author, branch, file…" value={prQuery()} onInput={(e) => setPrQuery(e.currentTarget.value)} />
             <label class="small muted"><input type="checkbox" checked={prOnlyTracked()} onChange={(e) => setPrOnlyTracked(e.currentTarget.checked)} /> touches tracked docs</label>
             <label class="small muted"><input type="checkbox" checked={prHideDrafts()} onChange={(e) => setPrHideDrafts(e.currentTarget.checked)} /> hide drafts</label>
           </div>

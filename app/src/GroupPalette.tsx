@@ -58,13 +58,13 @@ export const GroupPalette: Component<{
 
   return (
     <div class="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) p.onClose(); }}>
-      <div class="dialog" role="dialog" ref={dlg} aria-label="Assign to group" style={{ width: "min(520px, 92vw)" }}>
+      <div class="dialog" role="dialog" aria-modal="true" ref={dlg} aria-label="Assign to group" style={{ width: "min(520px, 92vw)" }}>
         <div class="dhead" ref={head} title="Drag to move · double-click to reset">
           <span class="title">Groups</span>
           <span class="quote mono">{p.targets.length === 1 ? `req~${p.targets[0]}` : `${p.targets.length} requirements`}</span>
         </div>
         <div class="dbody">
-          <input ref={input} placeholder="Type a group name — pick to add, pick again to remove, Enter to create" value={query()} onInput={(e) => { setQuery(e.currentTarget.value); setActive(0); }} onKeyDown={onKey} />
+          <input ref={input} name="group-search" aria-label="Group name — pick to add, pick again to remove, Enter to create" placeholder="Type a group name — pick to add, pick again to remove, Enter to create" value={query()} onInput={(e) => { setQuery(e.currentTarget.value); setActive(0); }} onKeyDown={onKey} />
           <div class="matches">
             <For each={matches()}>
               {(g, i) => (

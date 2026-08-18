@@ -180,7 +180,7 @@ export const InventoryView: Component<{
       <div class="invview-body">
         <div class="invview-main">
           <div class="filters">
-            <input ref={search} placeholder="Search id, statement, owner…  ( / )" value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
+            <input ref={search} name="inv-search" aria-label="Search requirements by id, statement, or owner" placeholder="Search id, statement, owner…  ( / )" value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
             <div class="seg small">
               <For each={STATUSES}>
                 {(st) => (
@@ -190,11 +190,11 @@ export const InventoryView: Component<{
                 )}
               </For>
             </div>
-            <select value={docFilter()} onChange={(e) => setDocFilter(e.currentTarget.value)}>
+            <select name="doc-filter" aria-label="Filter by doc" value={docFilter()} onChange={(e) => setDocFilter(e.currentTarget.value)}>
               <option value="">all docs</option>
               <For each={docs()}>{(d) => <option value={d}>{d}</option>}</For>
             </select>
-            <select value={groupFilter()} onChange={(e) => setGroupFilter(e.currentTarget.value)}>
+            <select name="group-filter" aria-label="Filter by group" value={groupFilter()} onChange={(e) => setGroupFilter(e.currentTarget.value)}>
               <option value="">all groups</option>
               <For each={groups() ?? []}>{(g) => <option value={g.group.title}>{g.group.title}</option>}</For>
             </select>
@@ -217,7 +217,7 @@ export const InventoryView: Component<{
               <span style={{ flex: 1 }} />
               <button class="ghost" onClick={() => setSelected(new Set<string>())}>clear</button>
               <Show when={retiring()}>
-                <input style={{ width: "260px" }} placeholder="reason (required)" value={retireReason()} onInput={(e) => setRetireReason(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter") bulkStatus("retired"); }} />
+                <input style={{ width: "260px" }} name="retire-reason" aria-label="Retire reason (required)" placeholder="reason (required)" value={retireReason()} onInput={(e) => setRetireReason(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter") bulkStatus("retired"); }} />
                 <button class="primary" disabled={!retireReason().trim()} onClick={() => bulkStatus("retired")}>Retire {selected().size}</button>
               </Show>
             </div>
@@ -233,7 +233,7 @@ export const InventoryView: Component<{
                       <table class="inv-table">
                         <thead>
                           <tr>
-                            <th class="c-chk"><input type="checkbox" checked={sec.rows.every((r) => selected().has(slugOf(r.id))) && sec.rows.length > 0} onChange={(e) => { const s = new Set(selected()); for (const r of sec.rows) e.currentTarget.checked ? s.add(slugOf(r.id)) : s.delete(slugOf(r.id)); setSelected(s); }} /></th>
+                            <th class="c-chk"><input type="checkbox" aria-label={`Select all${sec.title ? ` in ${sec.title}` : ""}`} checked={sec.rows.every((r) => selected().has(slugOf(r.id))) && sec.rows.length > 0} onChange={(e) => { const s = new Set(selected()); for (const r of sec.rows) e.currentTarget.checked ? s.add(slugOf(r.id)) : s.delete(slugOf(r.id)); setSelected(s); }} /></th>
                             <th class="c-id">id</th>
                             <th>statement</th>
                             <th class="c-status">status</th>
@@ -246,7 +246,7 @@ export const InventoryView: Component<{
                           <For each={sec.rows}>
                             {(r) => (
                               <tr classList={{ sel: selected().has(slugOf(r.id)), open: open() === slugOf(r.id) }} onClick={(e) => { if ((e.target as HTMLElement).tagName === "INPUT") return; setOpen(slugOf(r.id)); }}>
-                                <td class="c-chk" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={selected().has(slugOf(r.id))} onClick={(e) => toggleSel(slugOf(r.id), e)} onChange={() => {}} /></td>
+                                <td class="c-chk" onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`Select ${r.id}`} checked={selected().has(slugOf(r.id))} onClick={(e) => toggleSel(slugOf(r.id), e)} onChange={() => {}} /></td>
                                 <td class="mono id c-id" title={r.id}>{r.id.replace(/^req~/, "")}</td>
                                 <td class="stmt">
                                   <div class="text" classList={{ clamp: open() !== slugOf(r.id) }}>{r.statement}</div>
@@ -297,7 +297,7 @@ export const InventoryView: Component<{
               <span class="muted">{(groups() ?? []).length}</span>
             </div>
             <div class="newgroup">
-              <input placeholder="New group title…" value={newGroup()} onInput={(e) => setNewGroup(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter") createGroup(); }} />
+              <input name="new-group" aria-label="New group title" placeholder="New group title…" value={newGroup()} onInput={(e) => setNewGroup(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter") createGroup(); }} />
               <button onClick={createGroup} disabled={!newGroup().trim()}>Add</button>
             </div>
             <For each={groups() ?? []} fallback={<p class="muted" style={{ "font-size": "12px" }}>Groups are umbrella labels for oversight — “validation”, “lockout”… Select requirements and press <kbd>g</kbd>.</p>}>

@@ -82,14 +82,14 @@ export const ReqDrawer: Component<{
         <span class="mono" style={{ overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{p.req.id}</span>
         <span class={`chip status-${p.req.status}`}>{p.req.status}</span>
         <span style={{ flex: 1 }} />
-        <button class="ghost" onClick={p.onClose} title="close">✕</button>
+        <button class="ghost" onClick={p.onClose} title="close" aria-label="Close details">✕</button>
       </div>
       <Show
         when={editing()}
         fallback={<div class="stmt" onDblClick={() => { setDraft(p.req.statement); setEditing(true); }} title="Double-click to edit">{p.req.statement}</div>}
       >
         <div class="field" style={{ margin: "6px 0 10px" }}>
-          <textarea value={draft()} onInput={(e) => setDraft(e.currentTarget.value)} rows={3} />
+          <textarea name="statement-edit" aria-label="Edit statement" value={draft()} onInput={(e) => setDraft(e.currentTarget.value)} rows={3} />
           <div style={{ display: "flex", gap: "6px", "align-items": "center" }}>
             <span class="muted" style={{ "font-size": "11.5px", flex: 1 }}>Rewording keeps the rev; a meaning change should bump it.</span>
             <button onClick={() => setEditing(false)}>Cancel</button>
@@ -140,7 +140,7 @@ export const ReqDrawer: Component<{
         <div class="field" style={{ "margin-top": "8px" }}>
           <label>Why retire? (required)</label>
           <div style={{ display: "flex", gap: "6px" }}>
-            <input value={retireReason()} onInput={(e) => setRetireReason(e.currentTarget.value)} placeholder="e.g. superseded by req~x~2" onKeyDown={(e) => { if (e.key === "Enter") setStatus("retired"); }} />
+            <input name="retire-reason" aria-label="Why retire? (required)" value={retireReason()} onInput={(e) => setRetireReason(e.currentTarget.value)} placeholder="e.g. superseded by req~x~2" onKeyDown={(e) => { if (e.key === "Enter") setStatus("retired"); }} />
             <button class="primary" disabled={!retireReason().trim()} onClick={() => setStatus("retired")}>Retire</button>
           </div>
         </div>
@@ -161,6 +161,8 @@ export const ReqDrawer: Component<{
         <div class="field">
           <textarea
             rows={2}
+            name="note"
+            aria-label="Add a note"
             placeholder="Add a note — ⌘/Ctrl+⏎ to save"
             value={noteDraft()}
             onInput={(e) => setNoteDraft(e.currentTarget.value)}

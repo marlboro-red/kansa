@@ -33,7 +33,7 @@ export const Inventory: Component<{
   return (
     <aside class="inv">
       <div class="inv-head">
-        <input placeholder="Filter requirements…" value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
+        <input name="req-filter" aria-label="Filter requirements" placeholder="Filter requirements…" value={q()} onInput={(e) => setQ(e.currentTarget.value)} />
         <button class="ghost" onClick={() => setShowAll(!showAll())} title={showAll() ? "Showing every requirement in the repo" : "Showing this doc's requirements"}>
           {showAll() ? "repo" : "doc"}
         </button>
