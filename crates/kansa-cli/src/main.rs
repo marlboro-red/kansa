@@ -102,6 +102,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ReqCmd,
     },
+    /// Requirement groups — umbrella labels for oversight.
+    Group {
+        #[command(subcommand)]
+        cmd: GroupCmd,
+    },
     /// Dev bridge: serve the app's command surface over HTTP so the frontend can run in a
     /// browser (same core ops as the Tauri app). Binds 127.0.0.1 only.
     Serve {
@@ -229,6 +234,57 @@ enum ReqCmd {
         repo: RepoArg,
         slug: String,
         index: usize,
+        #[arg(long, env = "KANSA_USER", default_value_t = whoami())]
+        by: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum GroupCmd {
+    /// List groups with their rollups.
+    List {
+        #[command(flatten)]
+        repo: RepoArg,
+    },
+    /// Create a group (the slug is derived from the title).
+    Add {
+        #[command(flatten)]
+        repo: RepoArg,
+        title: String,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long, env = "KANSA_USER", default_value_t = whoami())]
+        by: String,
+    },
+    /// Add requirements to a group.
+    Assign {
+        #[command(flatten)]
+        repo: RepoArg,
+        group: String,
+        #[arg(required = true)]
+        reqs: Vec<String>,
+        #[arg(long, env = "KANSA_USER", default_value_t = whoami())]
+        by: String,
+    },
+    /// Remove requirements from a group.
+    Unassign {
+        #[command(flatten)]
+        repo: RepoArg,
+        group: String,
+        #[arg(required = true)]
+        reqs: Vec<String>,
+        #[arg(long, env = "KANSA_USER", default_value_t = whoami())]
+        by: String,
+    },
+    /// Retitle a group or set its description (`--description ""` clears it).
+    Update {
+        #[command(flatten)]
+        repo: RepoArg,
+        group: String,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
         #[arg(long, env = "KANSA_USER", default_value_t = whoami())]
         by: String,
     },
@@ -758,6 +814,97 @@ fn main() -> Result<()> {
                 out(json, &r, |r| {
                     format!("{} now has {} note(s)", r.id, r.notes.len())
                 })
+            }
+        },
+        Cmd::Group { cmd } => match cmd {
+            GroupCmd::List { repo } => {
+                let ws = open(&repo)?;
+                let gs = ops::group_rollups(&ws)?;
+                out(json, &gs, |gs| {
+                    if gs.is_empty() {
+                        return "no groups".into();
+                    }
+                    gs.iter()
+                        .map(|g| {
+                            let by_status = g
+                                .members_by_status
+                                .iter()
+                                .filter(|(_, n)| **n > 0)
+                                .map(|(s, n)| format!("{s} {n}"))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            let findings = if g.findings.is_empty() {
+                                String::new()
+                            } else {
+                                format!("  ⚠ {} finding(s)", g.findings.len())
+                            };
+                            format!(
+                                "{:<24} {:>3} member(s)  [{}]{}",
+                                g.group.id.slug,
+                                g.group.members.len(),
+                                by_status,
+                                findings
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(
+                            "
+",
+                        )
+                })
+            }
+            GroupCmd::Add {
+                repo,
+                title,
+                description,
+                by,
+            } => {
+                let ws = open(&repo)?;
+                let g = ops::create_group(&ws, &title, description.as_deref(), &by)?;
+                out(json, &g, |g| format!("created {}", g.id))
+            }
+            GroupCmd::Assign {
+                repo,
+                group,
+                reqs,
+                by,
+            } => {
+                let ws = open(&repo)?;
+                let g = ops::assign_group(&ws, &group, &reqs, &by)?;
+                out(json, &g, |g| {
+                    format!("{} now has {} member(s)", g.id, g.members.len())
+                })
+            }
+            GroupCmd::Unassign {
+                repo,
+                group,
+                reqs,
+                by,
+            } => {
+                let ws = open(&repo)?;
+                let g = ops::unassign_group(&ws, &group, &reqs, &by)?;
+                out(json, &g, |g| {
+                    format!("{} now has {} member(s)", g.id, g.members.len())
+                })
+            }
+            GroupCmd::Update {
+                repo,
+                group,
+                title,
+                description,
+                by,
+            } => {
+                let ws = open(&repo)?;
+                let g = ops::update_group(
+                    &ws,
+                    &group,
+                    title.as_deref(),
+                    description
+                        .as_deref()
+                        .map(|d| if d.is_empty() { None } else { Some(d) }),
+                    &by,
+                )?;
+                out(json, &g, |g| format!("{} — {}", g.id, g.title))
             }
         },
     }
