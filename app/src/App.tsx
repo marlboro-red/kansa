@@ -1,4 +1,4 @@
-import { createResource, createSignal, ErrorBoundary, For, onCleanup, Show, type Component } from "solid-js";
+import { createEffect, createResource, createSignal, ErrorBoundary, For, onCleanup, Show, type Component } from "solid-js";
 import { api, hasNativePicker, pickFolder, type RepoSummary } from "./api";
 import { FolderPicker } from "./FolderPicker";
 import { Classifier, type Toast } from "./Classifier";
@@ -18,7 +18,12 @@ type Route =
 const App: Component = () => {
   const [repos, { refetch: refetchRepos }] = createResource(api.listRepos);
   const [route, setRouteRaw] = createSignal<Route>(loadRoute());
-  const persistRoute = (r: Route) => { try { localStorage.setItem("kansa.route", JSON.stringify(r)); } catch {} };
+  // Drop the anchor span before persisting — a reload should land on the remembered scroll
+  // position, not re-jump to whatever anchor was clicked days ago.
+  const persistRoute = (r: Route) => {
+    const clean = r.kind === "doc" ? { ...r, span: undefined } : r;
+    try { localStorage.setItem("kansa.route", JSON.stringify(clean)); } catch {}
+  };
   const setRoute = (r: Route) => {
     if (JSON.stringify(r) === JSON.stringify(route())) return;
     setRouteRaw(r);
@@ -196,6 +201,9 @@ export function repoLabel(r?: RepoSummary, fallback = ""): string {
   return r.github;
 }
 
+/** PR list filters per repo (session-lived). */
+const prFilterMem = new Map<string, { q: string; tracked: boolean; noDrafts: boolean }>();
+
 function loadRoute(): Route {
   try { const r = JSON.parse(localStorage.getItem("kansa.route") ?? ""); if (r && typeof r.kind === "string") return r as Route; } catch {}
   return { kind: "home" };
@@ -303,6 +311,7 @@ const RepoPane: Component<{
 }> = (p) => {
   const [docs, { refetch: refetchDocs }] = createCached(() => `docs:${p.github}`, () => api.listDocs(p.github));
   const [status, { refetch: refetchStatus }] = createCached(() => `status:${p.github}`, () => api.repoStatus(p.github));
+  const savedPr = prFilterMem.get(p.github);
   const [prErr, setPrErr] = createSignal("");
   const [prsC, { refresh: refreshPrs }] = createSwr(() => `prs:${p.github}`, (force) => api.listPrs(p.github, force).catch((e) => { setPrErr(String(e)); return { data: [] as PrSummary[], fetched_at: new Date().toISOString(), refreshing: false }; }));
   const prs = () => prsC()?.data;
@@ -313,9 +322,10 @@ const RepoPane: Component<{
     const q = pick().trim().toLowerCase();
     return (docs() ?? []).filter((d) => !d.tracked && (!q || d.path.toLowerCase().includes(q))).slice(0, 12);
   };
-  const [prQuery, setPrQuery] = createSignal("");
-  const [prOnlyTracked, setPrOnlyTracked] = createSignal(false);
-  const [prHideDrafts, setPrHideDrafts] = createSignal(false);
+  const [prQuery, setPrQuery] = createSignal(savedPr?.q ?? "");
+  const [prOnlyTracked, setPrOnlyTracked] = createSignal(savedPr?.tracked ?? false);
+  const [prHideDrafts, setPrHideDrafts] = createSignal(savedPr?.noDrafts ?? false);
+  createEffect(() => prFilterMem.set(p.github, { q: prQuery(), tracked: prOnlyTracked(), noDrafts: prHideDrafts() }));
   const prsFiltered = () => {
     const q = prQuery().trim().toLowerCase();
     return (prs() ?? [])

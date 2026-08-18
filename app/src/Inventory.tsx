@@ -1,4 +1,7 @@
-import { createMemo, createSignal, For, Show, type Component } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js";
+
+/** Rail filter text per doc view (session-lived). */
+const railMem = new Map<string, string>();
 import type { Req } from "./api";
 import { slugOf } from "./Classifier";
 import type { Toast } from "./Classifier";
@@ -18,7 +21,8 @@ export const Inventory: Component<{
   onGroup: (slug: string) => void;
   toast: (t: Toast | null) => void;
 }> = (p) => {
-  const [q, setQ] = createSignal("");
+  const [q, setQ] = createSignal(railMem.get(`${p.github}:${p.doc}`) ?? "");
+  createEffect(() => railMem.set(`${p.github}:${p.doc}`, q()));
   const [showAll, setShowAll] = createSignal(false);
 
   const docReqs = createMemo(() => {

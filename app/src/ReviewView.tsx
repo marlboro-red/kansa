@@ -1,4 +1,7 @@
-import { createMemo, createResource, createSignal, For, Show, type Component } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Show, type Component } from "solid-js";
+
+/** "show resolved" toggle per repo (session-lived). */
+const showClosedMem = new Map<string, boolean>();
 import { api, type Question, type RepoStatus, type Round } from "./api";
 import { slugOf } from "./Classifier";
 import type { Toast } from "./Classifier";
@@ -14,7 +17,8 @@ export const ReviewView: Component<{
 }> = (p) => {
   const [questions, { refetch: refetchQ }] = createCached(() => `questions:${p.github}`, () => api.listQuestions(p.github));
   const [status] = createCached(() => `status:${p.github}`, () => api.repoStatus(p.github));
-  const [showClosed, setShowClosed] = createSignal(false);
+  const [showClosed, setShowClosed] = createSignal(showClosedMem.get(p.github) ?? false);
+  createEffect(() => showClosedMem.set(p.github, showClosed()));
 
   const open = createMemo(() => (questions() ?? []).filter((q) => q.status === "open").sort((a, b) => lvl(b.materiality) - lvl(a.materiality)));
   const closed = createMemo(() => (questions() ?? []).filter((q) => q.status !== "open"));

@@ -93,7 +93,9 @@ export const Classifier: Component<Props> = (p) => {
     for (const g of groups() ?? []) for (const mem of g.group.members) { const k = slugOf(mem); m.set(k, [...(m.get(k) ?? []), g.group.title]); }
     return m;
   });
-  const [groupLens, setGroupLens] = createSignal<string | null>(null); // group slug filter (`ui~grp-lens~1`)
+  // group slug filter (`ui~grp-lens~1`) — remembered per repo like zoom/panel width are globally
+  const [groupLens, setGroupLens] = createSignal<string | null>(lensMem.get(p.github) ?? null);
+  createEffect(() => lensMem.set(p.github, groupLens()));
   const [groupTargets, setGroupTargets] = createSignal<string[]>([]);
 
   const computedRows = createMemo<SpanRow[]>(() => {
@@ -525,6 +527,7 @@ export const Classifier: Component<Props> = (p) => {
     if (!restored) return;
     const r = rows()[cursor()];
     viewMem.set(viewKey(), { top: docEl?.scrollTop ?? 0, span: r?.span.id });
+    persistViewMem();
   };
   createEffect(() => { cursor(); rememberView(); });
 
@@ -540,9 +543,11 @@ export const Classifier: Component<Props> = (p) => {
         </div>
         <span class="spacer" />
         <Show when={(groups() ?? []).length}>
-          <select class="lens" name="group-lens" aria-label="Group lens — dim sentences outside a group" value={groupLens() ?? ""} onChange={(e) => setGroupLens(e.currentTarget.value || null)} title="Group lens — dim sentences outside a group">
-            <option value="">all groups</option>
-            <For each={groups()}>{(g) => <option value={slugOf(g.group.id)}>{g.group.title} ({g.group.members.length})</option>}</For>
+          {/* `selected` on the options, not `value` on the select: the options render async
+              (groups load), and a select value applied before its options exist displays "". */}
+          <select class="lens" name="group-lens" aria-label="Group lens — dim sentences outside a group" onChange={(e) => setGroupLens(e.currentTarget.value || null)} title="Group lens — dim sentences outside a group">
+            <option value="" selected={groupLens() === null}>all groups</option>
+            <For each={groups()}>{(g) => <option value={slugOf(g.group.id)} selected={groupLens() === slugOf(g.group.id)}>{g.group.title} ({g.group.members.length})</option>}</For>
           </select>
         </Show>
         <Show when={view()?.round} fallback={<span class="round">no open round</span>}>
@@ -736,8 +741,21 @@ export const Classifier: Component<Props> = (p) => {
 
 const [tick, setTick] = createSignal(0);
 /** Scroll offset + cursor span per doc view, so leaving for the inventory (or another doc) and
- *  coming back lands where the user was. Session-lived, like the view cache that repaints it. */
-const viewMem = new Map<string, { top: number; span?: string }>();
+ *  coming back lands where the user was. Backed by sessionStorage so a reload keeps it too. */
+const viewMem = new Map<string, { top: number; span?: string }>(
+  (() => { try { return Object.entries(JSON.parse(sessionStorage.getItem("kansa.viewMem") ?? "{}")); } catch { return []; } })(),
+);
+let viewMemTimer: number | undefined;
+function persistViewMem() {
+  if (viewMemTimer) return; // coalesce the scroll-event firehose
+  viewMemTimer = window.setTimeout(() => {
+    viewMemTimer = undefined;
+    try { sessionStorage.setItem("kansa.viewMem", JSON.stringify(Object.fromEntries(viewMem))); } catch { /* ignore */ }
+  }, 300);
+}
+
+/** Group-lens selection per repo (session-lived). */
+const lensMem = new Map<string, string | null>();
 
 const PANEL_KEY = "kansa.panelW";
 const DEFAULT_PANEL_W = 340;
