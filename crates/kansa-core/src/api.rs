@@ -53,6 +53,7 @@ fn j<T: serde::Serialize>(v: T) -> Result<Value> {
 
 pub const COMMANDS: &[&str] = &[
     "kansa_home",
+    "list_dirs",
     "list_repos",
     "register_repo",
     "register_local",
@@ -104,6 +105,43 @@ pub const COMMANDS: &[&str] = &[
 pub fn call(name: &str, args: &Value) -> Result<Value> {
     match name {
         "kansa_home" => j(crate::store::kansa_home()?.to_string_lossy().into_owned()),
+        // Directory listing for the browser-mode folder picker (no native dialog there).
+        // Same trust domain as the CLI user: the server only ever binds 127.0.0.1.
+        "list_dirs" => {
+            let path: Option<String> = arg_opt(args, "path")?;
+            let dir = match path.filter(|p| !p.trim().is_empty()) {
+                Some(p) => std::path::PathBuf::from(p),
+                None => dirs::home_dir().ok_or_else(|| anyhow!("no home directory"))?,
+            };
+            let dir = dir.canonicalize().unwrap_or(dir);
+            if !dir.is_dir() {
+                bail!("not a directory: {}", dir.display());
+            }
+            let mut subdirs: Vec<(String, String)> = Vec::new();
+            let mut markdown_files = 0usize;
+            for entry in std::fs::read_dir(&dir)? {
+                let entry = entry?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let ft = entry.file_type()?;
+                if ft.is_dir() {
+                    if !name.starts_with('.') {
+                        subdirs.push((name, entry.path().to_string_lossy().into_owned()));
+                    }
+                } else {
+                    let lower = name.to_lowercase();
+                    if lower.ends_with(".md") || lower.ends_with(".markdown") {
+                        markdown_files += 1;
+                    }
+                }
+            }
+            subdirs.sort_unstable_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+            j(json!({
+                "path": dir.to_string_lossy(),
+                "parent": dir.parent().map(|p| p.to_string_lossy().into_owned()),
+                "dirs": subdirs.into_iter().map(|(name, path)| json!({"name": name, "path": path})).collect::<Vec<_>>(),
+                "markdown_files": markdown_files,
+            }))
+        }
         "list_repos" => j(ops::list_registered()?),
         "register_repo" => {
             let github: String = arg(args, "github")?;

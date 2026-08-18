@@ -1,5 +1,6 @@
 import { createResource, createSignal, ErrorBoundary, For, Show, type Component } from "solid-js";
-import { api, pickFolder, type RepoSummary } from "./api";
+import { api, hasNativePicker, pickFolder, type RepoSummary } from "./api";
+import { FolderPicker } from "./FolderPicker";
 import { Classifier, type Toast } from "./Classifier";
 import { InventoryView } from "./InventoryView";
 import { ReviewView } from "./ReviewView";
@@ -20,6 +21,7 @@ const App: Component = () => {
   const setRoute = (r: Route) => { setRouteRaw(r); try { localStorage.setItem("kansa.route", JSON.stringify(r)); } catch {} };
   const [toast, setToast] = createSignal<Toast | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
+  const [pickingFolder, setPickingFolder] = createSignal(false);
   let toastTimer: number | undefined;
 
   function showToast(t: Toast | null) {
@@ -53,12 +55,23 @@ const App: Component = () => {
             if (r) { await refetchRepos(); setRoute({ kind: "repo", github: r.github }); }
           }}
           onAddLocal={async () => {
+            if (!hasNativePicker) { setPickingFolder(true); return; }
             const dir = await pickFolder();
             if (!dir) return;
             const r = await run(`importing ${dir}`, () => api.registerLocal(dir));
             if (r) { await refetchRepos(); setRoute({ kind: "repo", github: r.github }); }
           }}
         />
+        <Show when={pickingFolder()}>
+          <FolderPicker
+            onClose={() => setPickingFolder(false)}
+            onPick={async (dir) => {
+              setPickingFolder(false);
+              const r = await run(`importing ${dir}`, () => api.registerLocal(dir));
+              if (r) { await refetchRepos(); setRoute({ kind: "repo", github: r.github }); }
+            }}
+          />
+        </Show>
         <nav class="repos">
           <Show when={repos()} fallback={<p class="muted" style={{ padding: "0 10px" }}>loading…</p>}>
             <For each={repos()} fallback={<p class="muted" style={{ padding: "0 10px", "font-size": "12px" }}>No repos yet. Add one above.</p>}>

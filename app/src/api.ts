@@ -7,26 +7,52 @@
 import { bumpStoreVersion } from "./swr";
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-const BRIDGE = (import.meta.env.VITE_KANSA_BRIDGE as string | undefined) ?? "http://127.0.0.1:1430";
+
+/**
+ * Where the command surface lives. Vite dev (port 1420) talks to the separate `kansa serve`
+ * bridge; when the page is served by `kansa ui` itself, the origin IS the bridge.
+ */
+const BRIDGE =
+  (import.meta.env.VITE_KANSA_BRIDGE as string | undefined) ??
+  (typeof location !== "undefined" && location.protocol.startsWith("http") && location.port !== "1420"
+    ? location.origin
+    : "http://127.0.0.1:1430");
+
+/** Per-session token from `kansa ui` (?token=…), kept for same-tab reloads that lose the query. */
+const TOKEN: string | null = (() => {
+  if (inTauri || typeof location === "undefined") return null;
+  const t = new URLSearchParams(location.search).get("token");
+  try {
+    if (t) sessionStorage.setItem("kansa.token", t);
+    return t ?? sessionStorage.getItem("kansa.token");
+  } catch {
+    return t;
+  }
+})();
 
 /** Commands that never change the store; everything else bumps the store version on success. */
 const READ_COMMANDS = new Set([
-  "kansa_home", "list_repos", "list_docs", "repo_status", "doc_view", "doc_state",
+  "kansa_home", "list_dirs", "list_repos", "list_docs", "repo_status", "doc_view", "doc_state",
   "list_reqs", "rounds", "list_questions", "list_prs", "pr_docs", "inventory",
   "list_groups", "prefill_status",
 ]);
 
 export const transport: "tauri" | "http" = inTauri ? "tauri" : "http";
 
-/** Folder picker: native dialog in Tauri; a plain path prompt in the browser harness. */
+/** Native folder dialog — Tauri only. Browser mode uses the FolderPicker dialog instead. */
+export const hasNativePicker = inTauri;
 export async function pickFolder(): Promise<string | null> {
-  if (inTauri) {
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const r = await open({ directory: true, multiple: false, title: "Choose a folder of markdown" });
-    return typeof r === "string" ? r : null;
-  }
-  return window.prompt("Folder path (browser dev mode):") || null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const r = await open({ directory: true, multiple: false, title: "Choose a folder of markdown" });
+  return typeof r === "string" ? r : null;
 }
+
+export type DirListing = {
+  path: string;
+  parent: string | null;
+  dirs: { name: string; path: string }[];
+  markdown_files: number;
+};
 
 async function call<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
   let out: T;
@@ -36,7 +62,7 @@ async function call<T>(name: string, args: Record<string, unknown> = {}): Promis
   } else {
     const res = await fetch(`${BRIDGE}/api/${name}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(TOKEN ? { "x-kansa-token": TOKEN } : {}) },
       body: JSON.stringify(args),
     });
     const body = await res.json();
@@ -245,6 +271,7 @@ export type ExportResult = {
 
 export const api = {
   kansaHome: () => call<string>("kansa_home"),
+  listDirs: (path?: string) => call<DirListing>("list_dirs", { path }),
   listRepos: () => call<RepoSummary[]>("list_repos"),
   registerRepo: (github: string) => call<RepoSummary>("register_repo", { github }),
   registerLocal: (path: string) => call<RepoSummary>("register_local", { path }),

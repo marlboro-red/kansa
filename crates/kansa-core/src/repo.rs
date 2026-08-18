@@ -476,9 +476,11 @@ mod tests {
         let sig = git2::Signature::now("t", "t@t").unwrap();
         r.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
             .unwrap();
-        // make sure the branch is named main
+        // make sure the branch is named main — and HEAD points at it, whatever the machine's
+        // `init.defaultBranch` says (the clone reads the source's HEAD symref)
         let head = r.head().unwrap().peel_to_commit().unwrap();
         let _ = r.branch("main", &head, true);
+        r.set_head("refs/heads/main").unwrap();
 
         let dest = tempfile::tempdir().unwrap();
         let url = crate::ops::tests::file_url(src.path());

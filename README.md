@@ -8,8 +8,8 @@ in CI. See [spec.md](spec.md).
 
 ```
 crates/kansa-core   state store, objects, segmentation, reconciliation, agent, export — all logic
-crates/kansa-cli    `kansa` CLI (thin) + `kansa serve` dev bridge
-app/                Tauri 2 + SolidJS desktop app (thin)
+crates/kansa-cli    `kansa` CLI (thin) + `kansa ui` (embedded web UI) + `kansa serve` dev bridge
+app/                SolidJS frontend (embedded into the binary; optional Tauri 2 desktop shell)
 ```
 
 ## What it does
@@ -33,20 +33,34 @@ clone is never checked out. The app and CLI are skins over the same core — sam
 
 Not yet: virtualization for >5k-sentence docs, PM read-only mode, multi-user, packaging/signing.
 
+## Install
+
+One binary — the UI is embedded. Runtime prerequisites: `git` + GitHub CLI `gh` logged in
+(for GitHub repos; plain local folders need neither), optionally `reqtrace` + `claude` on PATH.
+
+```sh
+# prebuilt (macOS arm64/x86_64, Linux x86_64 musl, Windows x86_64):
+# download kansa-<target> from https://github.com/marlboro-red/kansa/releases, chmod +x, put on PATH
+
+# or from source (rust stable + node 22):
+cd app && npm install && npm run build && cd ..
+cargo install --path crates/kansa-cli
+```
+
 ## Run
 
 ```sh
-# prerequisites: rust stable, node 22, `git` + GitHub CLI `gh` logged in (required), optionally reqtrace + claude on PATH
-# windows: Git for Windows, WebView2 runtime (Tauri installs it), MSVC build tools for building from source
-cargo test                                   # core + cli
-cd app && npm install && npm run tauri dev   # desktop app
+kansa ui                                     # serves the app on 127.0.0.1 (per-session token) and opens your browser
+kansa ui --port 8080 --no-open               # fixed port, print the URL instead
 ```
 
-Browser dev loop — the frontend in Chrome against the real core:
+Development loops:
 
 ```sh
-cargo run -p kansa-cli -- serve              # http://127.0.0.1:1430/api/<command>
-cd app && npx vite                           # http://localhost:1420
+cargo test                                   # core + cli
+cargo run -p kansa-cli -- serve              # dev bridge (no token): http://127.0.0.1:1430/api/<command>
+cd app && npx vite                           # frontend with HMR against the bridge: http://localhost:1420
+cd app && npm install && npm run tauri dev   # optional native desktop shell (Tauri 2; needs WebView2 on Windows)
 ```
 
 CLI mirrors the app (same core ops):

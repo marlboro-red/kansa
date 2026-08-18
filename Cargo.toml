@@ -20,7 +20,12 @@ time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"
 dirs = "6"
 fs2 = "0.4"
 pulldown-cmark = { version = "0.13", default-features = false }
-git2 = "0.20"
+# default-features off: no openssl/ssh transports. GitHub fetches go through the system
+# `gh`/`git` (repo.rs), libgit2 only reads local/bare repos and fetches `file://` URLs —
+# and static musl builds stay dependency-free.
+git2 = { version = "0.20", default-features = false }
 tempfile = "3"
 tiny_http = "0.12"
 strsim = "0.11"
+include_dir = "0.7"
+getrandom = "0.3"

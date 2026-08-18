@@ -108,10 +108,21 @@ enum Cmd {
         cmd: GroupCmd,
     },
     /// Dev bridge: serve the app's command surface over HTTP so the frontend can run in a
-    /// browser (same core ops as the Tauri app). Binds 127.0.0.1 only.
+    /// browser (same core ops as the Tauri app). Binds 127.0.0.1 only. No auth — use `kansa ui`
+    /// for the tokened, self-contained mode.
     Serve {
         #[arg(long, default_value_t = 1430)]
         port: u16,
+    },
+    /// Open the kansa UI in your browser: serves the embedded frontend and the command surface
+    /// on 127.0.0.1 with a per-session token.
+    Ui {
+        /// Port to bind (0 = pick a free port).
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Print the URL instead of opening a browser.
+        #[arg(long)]
+        no_open: bool,
     },
 }
 
@@ -363,63 +374,155 @@ fn out<T: serde::Serialize>(json: bool, v: &T, human: impl FnOnce(&T) -> String)
     Ok(())
 }
 
-fn serve(port: u16) -> Result<()> {
+/// Frontend build output, embedded at compile time (build.rs creates the dir so fresh clones
+/// compile; an empty dir just means `kansa ui` reports the assets are missing).
+static UI_ASSETS: include_dir::Dir<'static> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../app/dist");
+
+fn respond_json(req: tiny_http::Request, code: u16, body: String) {
+    respond_raw(req, code, body.into_bytes(), "application/json");
+}
+
+fn respond_raw(req: tiny_http::Request, code: u16, body: Vec<u8>, ctype: &str) {
+    let mut r = tiny_http::Response::from_data(body).with_status_code(code);
+    for (k, v) in [
+        ("Access-Control-Allow-Origin", "*"),
+        ("Access-Control-Allow-Headers", "content-type, x-kansa-token"),
+        ("Access-Control-Allow-Methods", "POST, GET, OPTIONS"),
+        ("Content-Type", ctype),
+    ] {
+        r.add_header(tiny_http::Header::from_bytes(k, v).unwrap());
+    }
+    let _ = req.respond(r);
+}
+
+fn content_type(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "js" => "text/javascript",
+        "css" => "text/css",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "ico" => "image/x-icon",
+        "woff2" => "font/woff2",
+        "json" => "application/json",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Serve the command surface (and, with `ui`, the embedded frontend) on 127.0.0.1.
+/// `token`: when set, every /api call must carry it in `x-kansa-token` — static assets stay
+/// open (they contain no state; the token arrives via the URL the browser was opened with).
+fn serve(port: u16, token: Option<String>, ui: bool, open: bool) -> Result<()> {
     let server = tiny_http::Server::http(("127.0.0.1", port))
         .map_err(|e| anyhow!("bind 127.0.0.1:{port}: {e}"))?;
-    eprintln!("kansa dev bridge on http://127.0.0.1:{port}/api/<command>  (POST JSON args)");
-    fn respond(req: tiny_http::Request, code: u16, body: String) {
-        let mut r = tiny_http::Response::from_string(body).with_status_code(code);
-        for (k, v) in [
-            ("Access-Control-Allow-Origin", "*"),
-            ("Access-Control-Allow-Headers", "content-type"),
-            ("Access-Control-Allow-Methods", "POST, GET, OPTIONS"),
-            ("Content-Type", "application/json"),
-        ] {
-            r.add_header(tiny_http::Header::from_bytes(k, v).unwrap());
+    let bound = server
+        .server_addr()
+        .to_ip()
+        .map(|a| a.port())
+        .unwrap_or(port);
+    if ui {
+        let url = format!(
+            "http://127.0.0.1:{bound}/?token={}",
+            token.as_deref().unwrap_or("")
+        );
+        eprintln!("kansa ui on {url}");
+        if UI_ASSETS.get_file("index.html").is_none() {
+            eprintln!("warning: no embedded UI assets — build with `cd app && npm run build`, then rebuild kansa");
         }
-        let _ = req.respond(r);
+        if open {
+            open_browser(&url);
+        }
+    } else {
+        eprintln!("kansa dev bridge on http://127.0.0.1:{bound}/api/<command>  (POST JSON args)");
     }
     for mut req in server.incoming_requests() {
         let url = req.url().to_string();
         if *req.method() == tiny_http::Method::Options {
-            respond(req, 204, String::new());
+            respond_json(req, 204, String::new());
             continue;
         }
-        if url == "/api" || url == "/api/" {
-            respond(req, 200, serde_json::to_string(kansa_core::api::COMMANDS)?);
+        if let Some(rest) = url.strip_prefix("/api") {
+            if let Some(t) = &token {
+                let ok = req
+                    .headers()
+                    .iter()
+                    .any(|h| h.field.equiv("x-kansa-token") && h.value.as_str() == t);
+                if !ok {
+                    respond_json(req, 401, "{\"error\":\"missing or bad token\"}".into());
+                    continue;
+                }
+            }
+            let name = rest.trim_start_matches('/').trim_end_matches('/').to_string();
+            if name.is_empty() {
+                respond_json(req, 200, serde_json::to_string(kansa_core::api::COMMANDS)?);
+                continue;
+            }
+            let mut body = String::new();
+            let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
+            let args: serde_json::Value = if body.trim().is_empty() {
+                serde_json::json!({})
+            } else {
+                serde_json::from_str(&body).unwrap_or(serde_json::json!({}))
+            };
+            match kansa_core::api::call(&name, &args) {
+                Ok(v) => respond_json(req, 200, serde_json::to_string(&v)?),
+                Err(e) => respond_json(
+                    req,
+                    400,
+                    serde_json::to_string(&serde_json::json!({"error": format!("{e:#}")}))?,
+                ),
+            }
             continue;
         }
-        let Some(name) = url
-            .strip_prefix("/api/")
-            .map(|n| n.trim_end_matches('/').to_string())
-        else {
-            respond(req, 404, "{\"error\":\"not found\"}".into());
+        if ui && *req.method() == tiny_http::Method::Get {
+            let path = url.split('?').next().unwrap_or("/").trim_start_matches('/');
+            let path = if path.is_empty() { "index.html" } else { path };
+            match UI_ASSETS.get_file(path) {
+                Some(f) => respond_raw(req, 200, f.contents().to_vec(), content_type(path)),
+                // SPA-style fallback for extensionless paths; real missing assets 404.
+                None if !path.contains('.') => match UI_ASSETS.get_file("index.html") {
+                    Some(f) => respond_raw(req, 200, f.contents().to_vec(), content_type("index.html")),
+                    None => respond_raw(req, 503, MISSING_UI.as_bytes().to_vec(), "text/html; charset=utf-8"),
+                },
+                None => respond_json(req, 404, "{\"error\":\"not found\"}".into()),
+            }
             continue;
-        };
-        let mut body = String::new();
-        let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
-        let args: serde_json::Value = if body.trim().is_empty() {
-            serde_json::json!({})
-        } else {
-            serde_json::from_str(&body).unwrap_or(serde_json::json!({}))
-        };
-        match kansa_core::api::call(&name, &args) {
-            Ok(v) => respond(req, 200, serde_json::to_string(&v)?),
-            Err(e) => respond(
-                req,
-                400,
-                serde_json::to_string(&serde_json::json!({"error": format!("{e:#}")}))?,
-            ),
         }
+        respond_json(req, 404, "{\"error\":\"not found\"}".into());
     }
     Ok(())
+}
+
+const MISSING_UI: &str = "<!doctype html><meta charset=utf-8><title>kansa</title><body style=\"font:14px system-ui;padding:40px\"><h1>UI assets not embedded</h1><p>This binary was built without the frontend. Build it with:</p><pre>cd app &amp;&amp; npm install &amp;&amp; npm run build\ncargo build --release -p kansa-cli</pre>";
+
+fn open_browser(url: &str) {
+    use std::process::Command;
+    let r = match std::env::consts::OS {
+        "macos" => Command::new("open").arg(url).spawn(),
+        "windows" => Command::new("cmd").args(["/c", "start", "", url]).spawn(),
+        _ => Command::new("xdg-open").arg(url).spawn(),
+    };
+    if r.is_err() {
+        eprintln!("open this URL in your browser: {url}");
+    }
+}
+
+fn session_token() -> Result<String> {
+    let mut buf = [0u8; 32];
+    getrandom::fill(&mut buf).map_err(|e| anyhow!("random token: {e}"))?;
+    Ok(hex::encode(buf))
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let json = cli.json;
     match cli.cmd {
-        Cmd::Serve { port } => serve(port),
+        Cmd::Serve { port } => serve(port, None, false, false),
+        Cmd::Ui { port, no_open } => {
+            let token = session_token()?;
+            serve(port, Some(token), true, !no_open)
+        }
         Cmd::Repo { cmd } => match cmd {
             RepoCmd::Add { github, url } => {
                 let ws = match url {

@@ -1,0 +1,55 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      # The frontend build must land in app/dist before cargo runs: the binary embeds it.
+      - name: Build frontend
+        working-directory: app
+        run: |
+          npm ci
+          npm run build
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: musl toolchain
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build
+        run: cargo build --release -p kansa-cli --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist-bin
+          case "${{ matrix.target }}" in
+            *windows*) cp "target/${{ matrix.target }}/release/kansa.exe" "dist-bin/kansa-${{ matrix.target }}.exe" ;;
+            *)         cp "target/${{ matrix.target }}/release/kansa"     "dist-bin/kansa-${{ matrix.target }}" ;;
+          esac
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist-bin/*
