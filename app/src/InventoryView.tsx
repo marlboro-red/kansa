@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, onCleanup, onMount, Show, type Component } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type Component } from "solid-js";
 import { api, type ExportResult, type GroupRollup, type InventoryRow, type Status } from "./api";
 import { slugOf } from "./Classifier";
 import type { Toast } from "./Classifier";
@@ -8,6 +8,14 @@ import { createCached } from "./swr";
 
 const STATUSES: Status[] = ["extracted", "assumed", "confirmed", "disputed", "retired"];
 type GroupBy = "none" | "group" | "doc" | "status";
+
+/** The working set survives leaving the view (anchor click-throughs and back). Session-lived,
+ *  keyed per repo — same pattern as the classifier's scroll memory. */
+type InvState = {
+  q: string; status: Set<Status>; doc: string; group: string; groupBy: GroupBy;
+  selected: Set<string>; open: string | null; scroll: number;
+};
+const invMem = new Map<string, InvState>();
 
 /** Repo-wide inventory (spec §4.2): every requirement, filters, group lens, bulk actions, export. */
 export const InventoryView: Component<{
@@ -21,13 +29,35 @@ export const InventoryView: Component<{
   const [status, { refetch: refetchStatus }] = createCached(() => `status:${p.github}`, () => api.repoStatus(p.github));
   const refetchAll = () => { refetchRows(); refetchGroups(); refetchStatus(); };
 
-  const [q, setQ] = createSignal("");
-  const [statusFilter, setStatusFilter] = createSignal<Set<Status>>(new Set());
-  const [docFilter, setDocFilter] = createSignal<string>("");
-  const [groupFilter, setGroupFilter] = createSignal<string>("");
-  const [groupBy, setGroupBy] = createSignal<GroupBy>("none");
-  const [selected, setSelected] = createSignal<Set<string>>(new Set()); // slugs
-  const [open, setOpen] = createSignal<string | null>(null); // drawer slug
+  const saved = invMem.get(p.github);
+  const [q, setQ] = createSignal(saved?.q ?? "");
+  const [statusFilter, setStatusFilter] = createSignal<Set<Status>>(saved?.status ?? new Set());
+  const [docFilter, setDocFilter] = createSignal<string>(saved?.doc ?? "");
+  const [groupFilter, setGroupFilter] = createSignal<string>(saved?.group ?? "");
+  const [groupBy, setGroupBy] = createSignal<GroupBy>(saved?.groupBy ?? "none");
+  const [selected, setSelected] = createSignal<Set<string>>(saved?.selected ?? new Set()); // slugs
+  const [open, setOpen] = createSignal<string | null>(saved?.open ?? null); // drawer slug
+  let tablewrap: HTMLDivElement | undefined;
+  // One effect mirrors the whole working set into the memory; scroll writes arrive via onScroll.
+  createEffect(() => {
+    invMem.set(p.github, {
+      q: q(), status: statusFilter(), doc: docFilter(), group: groupFilter(), groupBy: groupBy(),
+      selected: selected(), open: open(), scroll: invMem.get(p.github)?.scroll ?? 0,
+    });
+  });
+  const rememberScroll = () => {
+    const s = invMem.get(p.github);
+    if (s && tablewrap) s.scroll = tablewrap.scrollTop;
+  };
+  // Restore table scroll once rows have rendered (scrollTop clamps to 0 on empty content).
+  let scrollRestored = false;
+  createEffect(() => {
+    if (!scrollRestored && rows() && filtered().length && tablewrap) {
+      scrollRestored = true;
+      const top = saved?.scroll ?? 0;
+      queueMicrotask(() => { if (tablewrap) tablewrap.scrollTop = top; });
+    }
+  });
   const [palette, setPalette] = createSignal(false);
   const [exportResult, setExportResult] = createSignal<ExportResult | null>(null);
   const [busy, setBusy] = createSignal(false);
@@ -223,7 +253,7 @@ export const InventoryView: Component<{
             </div>
           </Show>
 
-          <div class="tablewrap">
+          <div class="tablewrap" ref={tablewrap} onScroll={rememberScroll}>
             <Show when={rows()} fallback={<p class="muted" style={{ padding: "16px" }}>loading…</p>}>
               <Show when={filtered().length} fallback={<div class="inv-empty">{total() ? "Nothing matches these filters." : "No requirements yet — open a doc and classify."}</div>}>
                 <For each={sections()}>
