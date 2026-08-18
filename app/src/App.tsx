@@ -1,4 +1,4 @@
-import { createResource, createSignal, ErrorBoundary, For, Show, type Component } from "solid-js";
+import { createResource, createSignal, ErrorBoundary, For, onCleanup, Show, type Component } from "solid-js";
 import { api, hasNativePicker, pickFolder, type RepoSummary } from "./api";
 import { FolderPicker } from "./FolderPicker";
 import { Classifier, type Toast } from "./Classifier";
@@ -18,7 +18,22 @@ type Route =
 const App: Component = () => {
   const [repos, { refetch: refetchRepos }] = createResource(api.listRepos);
   const [route, setRouteRaw] = createSignal<Route>(loadRoute());
-  const setRoute = (r: Route) => { setRouteRaw(r); try { localStorage.setItem("kansa.route", JSON.stringify(r)); } catch {} };
+  const persistRoute = (r: Route) => { try { localStorage.setItem("kansa.route", JSON.stringify(r)); } catch {} };
+  const setRoute = (r: Route) => {
+    if (JSON.stringify(r) === JSON.stringify(route())) return;
+    setRouteRaw(r);
+    persistRoute(r);
+    // Each in-app navigation is a history entry, so the browser's back/forward buttons walk
+    // kansa's views instead of leaving the app (the URL itself stays as opened, token intact).
+    try { history.pushState(r, ""); } catch { /* ignore */ }
+  };
+  try { history.replaceState(route(), ""); } catch { /* seed the entry we loaded on */ }
+  const onPop = (e: PopStateEvent) => {
+    const r = e.state as Route | null;
+    if (r && typeof r.kind === "string") { setRouteRaw(r); persistRoute(r); }
+  };
+  window.addEventListener("popstate", onPop);
+  onCleanup(() => window.removeEventListener("popstate", onPop));
   const [toast, setToast] = createSignal<Toast | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
   const [pickingFolder, setPickingFolder] = createSignal(false);
