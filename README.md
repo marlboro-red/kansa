@@ -12,28 +12,37 @@ crates/kansa-cli    `kansa` CLI (thin) + `kansa serve` dev bridge
 app/                Tauri 2 + SolidJS desktop app (thin)
 ```
 
-## Status
+## What it does
 
-| Milestone | State |
-|---|---|
-| UM0 core + shells | done — store, segmenter, snapshots, reqtrace export, CLI, Tauri shell |
-| UM1 manual classifier | done — serif doc pane, margin marks, residue rail, `u/n/p/r/c/q/x/g` loop, palette, question dialog |
-| UM2 inventory + groups | done — repo-wide table, filters, group-by, bulk status/retire, groups + `g` quick-assign + lens, export w/ validate |
-| UM3 reconciliation, PRs, questions | done — verdicts (unchanged/reworded/missing), decisions, confirm/adopt + round supersede, PR view at head, review view (question queue, round timeline) |
-| UM4 agent pre-fill | done — `claude -p` background job, proposals panel, ⏎/x accept-reject, accept-all, `by: agent, accepted-by: you` |
+- **Classifier** — serif doc pane with margin marks and a residue rail; drive the whole loop from
+  the keyboard (`u/n/p/r/c/q/x/g`, command palette, question dialog).
+- **Inventory** — repo-wide requirement table with filters, group-by, bulk status/retire; groups
+  as umbrella labels with quick-assign and a group lens.
+- **Reconciliation** — on fetch, changed docs get per-anchor verdicts (unchanged / reworded /
+  missing) to confirm or adopt; meaning changes mark requirements *suspect*, never silently
+  rewritten. PR heads can be classified as their own context.
+- **Questions** — flag ambiguous sentences with readings and a default; review queue and round
+  timeline in the review view.
+- **Agent pre-fill** — a background `claude -p` job proposes classifications; accept/reject with
+  `⏎`/`x` (or accept all). Accepted marks record `by: agent, accepted-by: you`.
+- **Export** — `requirements.yaml` + `not-in-scope.yaml` in reqtrace format, validated with
+  `reqtrace validate` when available.
 
-Deferred: virtualization for >5k-sentence docs, PM read-only mode, multi-user, packaging/signing.
+State lives in a local store outside the repo (atomic writes, full history per object); the bare
+clone is never checked out. The app and CLI are skins over the same core — same state, same ops.
+
+Not yet: virtualization for >5k-sentence docs, PM read-only mode, multi-user, packaging/signing.
 
 ## Run
 
 ```sh
 # prerequisites: rust stable, node 22, `git` + GitHub CLI `gh` logged in (required), optionally reqtrace + claude on PATH
 # windows: Git for Windows, WebView2 runtime (Tauri installs it), MSVC build tools for building from source
-cargo test                                   # core + cli (34 tests)
+cargo test                                   # core + cli
 cd app && npm install && npm run tauri dev   # desktop app
 ```
 
-Browser dev loop — the frontend in Chrome against the real core (this is how UI testing was done):
+Browser dev loop — the frontend in Chrome against the real core:
 
 ```sh
 cargo run -p kansa-cli -- serve              # http://127.0.0.1:1430/api/<command>
@@ -59,6 +68,8 @@ kansa close -r owner/name -d docs/hld.md
 kansa export -r owner/name                   # requirements.yaml + not-in-scope.yaml, then `reqtrace validate`
 kansa repo refresh -r owner/name             # fetch; changed docs go to reconciliation
 ```
+
+All commands take `--json` for scripting.
 
 ## Configuration
 
