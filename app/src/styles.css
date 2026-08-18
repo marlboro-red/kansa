@@ -187,7 +187,18 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .topbar select.lens { width: auto; padding: 4px 8px; font-size: 12px; background: var(--panel-2); }
 .topbar .round b { color: var(--ink-2); font-weight: 600; }
 
-.work { display: grid; grid-template-columns: 1fr 340px; min-height: 0; }
+.work { display: grid; grid-template-columns: 1fr var(--panel-w, 340px); min-height: 0; }
+/* The right panel's drag divider sits over the panel's left border, outside its scroll area. */
+.panelslot { position: relative; display: grid; min-width: 0; min-height: 0; }
+.vsplit { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 6; touch-action: none; }
+.recon .reqchip { cursor: pointer; }
+.recon .reqchip.on { border-color: var(--jade); color: var(--ink); }
+.recon .reqcard { margin: 4px 0 2px; padding: 6px 8px; border: 1px solid var(--line); border-left: 2px solid var(--jade); border-radius: var(--r); background: var(--panel-2); display: flex; flex-direction: column; gap: 4px; }
+.recon .reqcard .row1 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.recon .reqcard .stmt { font-family: var(--serif); font-size: 13px; line-height: 1.4; color: var(--ink); }
+.recon .reqcard .loud { color: var(--amber); }
+.recon .reqcard .cardnotes { margin: 0; padding-left: 16px; font-size: 11.5px; color: var(--ink-2); }
+.vsplit:hover, .vsplit:active { background: color-mix(in srgb, var(--amber) 35%, transparent); }
 .docwrap { position: relative; min-height: 0; overflow: hidden; display: grid; grid-template-columns: 1fr 14px; }
 .docscroll { overflow-y: auto; overflow-x: hidden; padding: 28px 40px 45vh 0; scroll-padding-top: 30vh; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
 .docscroll::-webkit-scrollbar { width: 8px; }

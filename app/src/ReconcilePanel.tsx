@@ -1,5 +1,5 @@
 import { createMemo, createSignal, For, Show, type Component } from "solid-js";
-import type { Decision, Reconciliation, Verdict, VerdictKind } from "./api";
+import type { Decision, Reconciliation, Req, Verdict, VerdictKind } from "./api";
 
 const ORDER: Record<VerdictKind, number> = { missing: 0, "meaning-changed": 1, reworded: 2, unchanged: 3 };
 
@@ -12,6 +12,8 @@ export const ReconcilePanel: Component<{
   recon: Reconciliation;
   /** id → text for `recon.added` (from the incoming snapshot). */
   addedText: (id: string) => string | undefined;
+  /** Requirement behind a verdict's `req~…` chip, for the inline detail card. */
+  reqOf: (id: string) => Req | undefined;
   readOnly: boolean;
   picking: string | null;
   focus: string | null;
@@ -25,6 +27,8 @@ export const ReconcilePanel: Component<{
   const [showUnchanged, setShowUnchanged] = createSignal(false);
   const [retireFor, setRetireFor] = createSignal<string | null>(null);
   const [reason, setReason] = createSignal("");
+  /** `${verdict.from}|${reqId}` of the open detail card — deciding needs the requirement, not just its id. */
+  const [openReq, setOpenReq] = createSignal<string | null>(null);
 
   const sorted = createMemo(() =>
     [...p.recon.verdicts].sort((a, b) => ORDER[a.kind] - ORDER[b.kind]).filter((v) => showUnchanged() || v.kind !== "unchanged"),
@@ -78,10 +82,21 @@ export const ReconcilePanel: Component<{
                 <div class="to">{v.to_text}</div>
               </Show>
               <div class="links">
-                <For each={v.reqs}>{(r) => <span class="chip">{r}</span>}</For>
+                <For each={v.reqs}>
+                  {(r) => (
+                    <button class="chip reqchip" classList={{ on: openReq() === `${v.from}|${r}` }}
+                      title="Show this requirement's details"
+                      onClick={() => setOpenReq(openReq() === `${v.from}|${r}` ? null : `${v.from}|${r}`)}>
+                      {r}
+                    </button>
+                  )}
+                </For>
                 <For each={v.questions}>{(q) => <span class="chip qchip">{q}</span>}</For>
                 <Show when={v.non_normative}><span class="chip">context</span></Show>
               </div>
+              <For each={v.reqs.filter((r) => openReq() === `${v.from}|${r}`)}>
+                {(r) => <ReqCard req={p.reqOf(r)} id={r} thisSpan={v.from} doc={p.recon.doc} />}
+              </For>
               <Show when={!p.readOnly && v.kind !== "unchanged"}>
                 <div class="actions">
                   <Show when={v.to}>
@@ -131,3 +146,37 @@ function label(d: Decision) {
   }
 }
 export type { Verdict };
+
+/**
+ * Just enough of a requirement to decide a verdict: what it says, how firm it is, and whether
+ * this sentence is its only source (drop vs retire) — plus any notes the reader left themselves.
+ */
+const ReqCard: Component<{ req: Req | undefined; id: string; thisSpan: string; doc: string }> = (p) => (
+  <Show when={p.req} fallback={<div class="reqcard muted small">{p.id} — not loaded (refresh the doc)</div>}>
+    {(r) => {
+      const others = () => r().anchors.filter((a) => !(a.doc === p.doc && a.span === p.thisSpan));
+      return (
+        <div class="reqcard">
+          <div class="row1">
+            <span class={`chip status-${r().status}`}>{r().status}</span>
+            <Show when={r().pattern}><span class="small muted">{r().pattern}</span></Show>
+            <Show when={r().rating}><span class="small mono">[{r().rating![0]}, {r().rating![1]}]</span></Show>
+            <Show when={r().owner}><span class="small muted">{r().owner}</span></Show>
+          </div>
+          <div class="stmt">{r().statement}</div>
+          <div class="small muted">
+            {others().length === 0
+              ? "this sentence is its only source — dropping the anchor leaves it unanchored"
+              : `also anchored to ${others().length} other sentence${others().length === 1 ? "" : "s"}: ${others().map((a) => `${a.doc.split("/").pop()}:${a.span.slice(2, 8)}`).join(", ")}`}
+          </div>
+          <Show when={r().suspect}><div class="small loud">suspect — {r().suspect}</div></Show>
+          <Show when={r().notes?.length}>
+            <ul class="cardnotes">
+              <For each={r().notes}>{(n) => <li>{n.text} <span class="muted">— {n.by}, {n.at.slice(0, 10)}</span></li>}</For>
+            </ul>
+          </Show>
+        </div>
+      );
+    }}
+  </Show>
+);

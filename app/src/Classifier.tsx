@@ -403,6 +403,33 @@ export const Classifier: Component<Props> = (p) => {
     setZoom(zoom() * Math.exp(-e.deltaY * 0.002));
   }
 
+  // ---- right panel width: drag the divider, double-click to reset (`ui~panel-resize~1`).
+  const [panelW, setPanelWSignal] = createSignal(storedPanelW());
+  // Cap against the window too, so a wide panel can never squeeze the doc pane out of usefulness.
+  const setPanelW = (px: number) =>
+    setPanelWSignal(Math.max(260, Math.min(760, window.innerWidth - 420, Math.round(px))));
+  function startResize(e: PointerEvent) {
+    e.preventDefault();
+    const handle = e.currentTarget as HTMLElement;
+    const startX = e.clientX;
+    const startW = panelW();
+    handle.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => setPanelW(startW - (ev.clientX - startX));
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      try { localStorage.setItem(PANEL_KEY, String(panelW())); } catch { /* ignore */ }
+      setTick((n) => n + 1); // the doc reflowed; refresh the rail's viewport box
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+  }
+  function resetPanelW() {
+    setPanelW(DEFAULT_PANEL_W);
+    try { localStorage.removeItem(PANEL_KEY); } catch { /* ignore */ }
+    setTick((n) => n + 1);
+  }
+
   // ---- keyboard
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null;
@@ -525,10 +552,13 @@ export const Classifier: Component<Props> = (p) => {
         </button>
       </header>
 
-      <div class="work">
+      <div class="work" style={{ "--panel-w": `${panelW()}px` }}>
         <div class="docwrap">
           <div class="docscroll" ref={docEl} style={{ "--doc-zoom": String(zoom()) }} onScroll={() => setTick((n) => n + 1)}>
-            <Show when={view()} fallback={<div class="empty muted">loading…</div>}>
+            {/* `active()`, not `view()`: while reviewing a reconciliation the pane must render the
+                incoming snapshot — `rows` already come from it, so feeding DocBody the old view
+                paints stale text against the new rows. */}
+            <Show when={active()} fallback={<div class="empty muted">loading…</div>}>
               {(v) => (
                 <DocBody
                   view={v()}
@@ -550,6 +580,8 @@ export const Classifier: Component<Props> = (p) => {
           <Rail rows={rows()} cursor={cursor()} onJump={(i) => move(i)} docEl={docEl} tick={tick()} />
         </div>
 
+        <div class="panelslot">
+        <div class="vsplit" onPointerDown={startResize} onDblClick={resetPanelW} title="Drag to resize · double-click to reset" />
         <Show when={showProposals() && !reviewing()} fallback={<Show when={reviewing() && view()?.pending} fallback={<Inventory
           doc={p.doc}
           reqs={reqs() ?? []}
@@ -572,6 +604,7 @@ export const Classifier: Component<Props> = (p) => {
             <ReconcilePanel
               recon={pend()}
               addedText={(id) => incoming()?.snapshot.spans.find((s) => s.id === id)?.text}
+              reqOf={(id) => reqBySlug().get(slugOf(id))}
               readOnly={isPr()}
               picking={picking()}
               focus={focusSpan()}
@@ -599,6 +632,7 @@ export const Classifier: Component<Props> = (p) => {
             onExit={() => setShowProposals(false)}
           />
         </Show>
+        </div>
       </div>
 
       <footer class="statusbar">
@@ -664,6 +698,14 @@ export const Classifier: Component<Props> = (p) => {
 };
 
 const [tick, setTick] = createSignal(0);
+const PANEL_KEY = "kansa.panelW";
+const DEFAULT_PANEL_W = 340;
+function storedPanelW(): number {
+  try {
+    const w = Number(localStorage.getItem(PANEL_KEY));
+    return Number.isFinite(w) && w >= 260 && w <= 760 ? w : DEFAULT_PANEL_W;
+  } catch { return DEFAULT_PANEL_W; }
+}
 const ZOOM_KEY = "kansa.docZoom";
 function storedZoom(): number {
   try {
