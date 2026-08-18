@@ -305,6 +305,14 @@ export const Classifier: Component<Props> = (p) => {
       p.toast({ kind: "info", text: `Added ${groupTargets().length === 1 ? `req~${groupTargets()[0]}` : `${groupTargets().length} requirements`} to group.` });
     } catch (e) { p.toast({ kind: "error", text: String(e) }); }
   }
+  async function unassignFromGroup(groupSlug: string) {
+    setDialog(null);
+    try {
+      await api.unassignGroup(p.github, groupSlug, groupTargets());
+      refetchGroups();
+      p.toast({ kind: "info", text: `Removed ${groupTargets().length === 1 ? `req~${groupTargets()[0]}` : `${groupTargets().length} requirements`} from group.` });
+    } catch (e) { p.toast({ kind: "error", text: String(e) }); }
+  }
   async function createAndAssign(title: string) {
     setDialog(null);
     try {
@@ -596,7 +604,7 @@ export const Classifier: Component<Props> = (p) => {
         <QuestionDialog quote={selectedText()} onClose={() => setDialog(null)} onSubmit={raiseQuestion} />
       </Show>
       <Show when={dialog() === "group"}>
-        <GroupPalette groups={groups() ?? []} targets={groupTargets()} onClose={() => setDialog(null)} onAssign={assignToGroup} onCreate={createAndAssign} />
+        <GroupPalette groups={groups() ?? []} targets={groupTargets()} onClose={() => setDialog(null)} onAssign={assignToGroup} onUnassign={unassignFromGroup} onCreate={createAndAssign} />
       </Show>
       <Show when={dialog() === "help"}>
         <div class="help">

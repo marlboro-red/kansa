@@ -312,6 +312,12 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .drawer .kv dt { color: var(--ink-3); }
 .drawer .kv dd { margin: 0; }
 .drawer .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.drawer .grouplist { display: flex; flex-wrap: wrap; gap: 4px; }
+.drawer .chip.grp { display: inline-flex; align-items: center; gap: 3px; }
+.drawer .chip.grp .x { border: 0; background: none; padding: 0 1px; cursor: pointer; color: var(--ink-3); font-size: 10px; line-height: 1; }
+.drawer .chip.grp .x:hover { color: var(--ink); }
+.match .memberstate { color: var(--jade); }
+.match.remove .memberstate { color: var(--coral); }
 .drawer .notes { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
 .drawer .notes .field { margin-top: 6px; }
 .drawer .notes textarea { width: 100%; }

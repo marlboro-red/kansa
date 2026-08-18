@@ -102,6 +102,19 @@ export const InventoryView: Component<{
     try { await api.assignGroup(p.github, groupSlug, [...selected()]); refetchAll(); p.toast({ kind: "info", text: `Added ${selected().size} to group.` }); }
     catch (e) { p.toast({ kind: "error", text: String(e) }); }
   }
+  async function unassign(groupSlug: string) {
+    setPalette(false);
+    const n = selected().size;
+    try { await api.unassignGroup(p.github, groupSlug, [...selected()]); refetchAll(); p.toast({ kind: "info", text: `Removed ${n} from group.` }); }
+    catch (e) { p.toast({ kind: "error", text: String(e) }); }
+  }
+  /** The drawer knows group titles, not slugs; groups are unique by title in the picker. */
+  async function unassignByTitle(slug: string, title: string) {
+    const g = (groups() ?? []).find((x) => x.group.title === title);
+    if (!g) return;
+    try { await api.unassignGroup(p.github, slugOf(g.group.id), [slug]); refetchAll(); }
+    catch (e) { p.toast({ kind: "error", text: String(e) }); }
+  }
   async function createAndAssign(title: string) {
     setPalette(false);
     try { const g = await api.createGroup(p.github, title); await api.assignGroup(p.github, slugOf(g.id), [...selected()]); refetchAll(); p.toast({ kind: "info", text: `Created “${g.title}”.` }); }
@@ -125,7 +138,7 @@ export const InventoryView: Component<{
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === "/") { e.preventDefault(); search?.focus(); }
     else if (e.key === "g" && selected().size) { e.preventDefault(); setPalette(true); }
-    else if (e.key === "a" && e.shiftKey) { e.preventDefault(); selectAllVisible(); }
+    else if (e.key.toLowerCase() === "a" && e.shiftKey) { e.preventDefault(); selectAllVisible(); }
     else if (e.key === "Escape") { setSelected(new Set<string>()); setOpen(null); setExportResult(null); }
   }
   onMount(() => window.addEventListener("keydown", onKey));
@@ -273,6 +286,7 @@ export const InventoryView: Component<{
                 onChanged={refetchAll}
                 onClose={() => setOpen(null)}
                 onGroup={() => { setSelected(new Set([slugOf(r().id)])); setPalette(true); }}
+                onUngroup={(title) => unassignByTitle(slugOf(r().id), title)}
                 toast={p.toast}
               />
             )}
@@ -294,7 +308,7 @@ export const InventoryView: Component<{
       </div>
 
       <Show when={palette()}>
-        <GroupPalette groups={groups() ?? []} targets={[...selected()]} onClose={() => setPalette(false)} onAssign={assign} onCreate={createAndAssign} />
+        <GroupPalette groups={groups() ?? []} targets={[...selected()]} onClose={() => setPalette(false)} onAssign={assign} onUnassign={unassign} onCreate={createAndAssign} />
       </Show>
     </div>
   );

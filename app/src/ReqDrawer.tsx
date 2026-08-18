@@ -14,6 +14,8 @@ export const ReqDrawer: Component<{
   onChanged: () => void;
   onClose: () => void;
   onGroup?: () => void;
+  /** Remove this requirement from the named group (title, as shown). */
+  onUngroup?: (title: string) => void;
   toast: (t: Toast | null) => void;
 }> = (p) => {
   const [retireReason, setRetireReason] = createSignal("");
@@ -100,7 +102,19 @@ export const ReqDrawer: Component<{
         <dt>pattern</dt><dd>{p.req.pattern ?? <span class="muted">—</span>}</dd>
         <Show when={p.req.rating}><dt>rating</dt><dd class="mono">[{p.req.rating![0]}, {p.req.rating![1]}]</dd></Show>
         <Show when={p.req.owner}><dt>owner</dt><dd>{p.req.owner}</dd></Show>
-        <Show when={p.groups && p.groups.length}><dt>groups</dt><dd>{p.groups!.join(", ")}</dd></Show>
+        <Show when={p.groups && p.groups.length}>
+          <dt>groups</dt>
+          <dd class="grouplist">
+            <For each={p.groups!}>
+              {(g) => (
+                <span class="chip grp">
+                  {g}
+                  <Show when={p.onUngroup}><button class="x" title={`Remove from “${g}”`} onClick={() => p.onUngroup!(g)}>✕</button></Show>
+                </span>
+              )}
+            </For>
+          </dd>
+        </Show>
         <dt>anchors</dt>
         <dd>
           <Show when={p.req.anchors.length} fallback={<span class="muted">none — this requirement has no source sentence</span>}>
