@@ -25,7 +25,7 @@ const App: Component = () => {
   function showToast(t: Toast | null) {
     setToast(t);
     if (toastTimer) window.clearTimeout(toastTimer);
-    if (t && t.kind === "info") toastTimer = window.setTimeout(() => setToast(null), 3500);
+    if (t && t.kind === "info" && !t.sticky) toastTimer = window.setTimeout(() => setToast(null), 3500);
   }
 
   async function run<T>(label: string, f: () => Promise<T>): Promise<T | undefined> {
@@ -398,7 +398,22 @@ const RepoPane: Component<{
           </div>
         </Show>
         <Show when={prs()} fallback={<p class="muted">loading…</p>}>
-          <Show when={(prs() ?? []).length} fallback={<p class="muted" style={{ "font-size": "12px" }}>{prErr() || "No open pull requests."}</p>}>
+          <Show
+            when={(prs() ?? []).length}
+            fallback={
+              <Show when={prErr()} fallback={<p class="muted" style={{ "font-size": "12px" }}>No open pull requests.</p>}>
+                <div class="muted" style={{ "font-size": "12px" }}>
+                  <p style={{ margin: "0 0 4px" }}>
+                    Pull requests are unavailable for this repo — it may not exist on GitHub, or the <span class="mono">gh</span> CLI isn't logged in.
+                  </p>
+                  <details>
+                    <summary style={{ cursor: "pointer" }}>details</summary>
+                    <pre class="mono" style={{ "white-space": "pre-wrap", margin: "6px 0 0" }}>{prErr()}</pre>
+                  </details>
+                </div>
+              </Show>
+            }
+          >
             <ul class="prlist">
               <For each={prsFiltered()} fallback={<li class="muted" style={{ "font-size": "12px" }}>No pull requests match.</li>}>
                 {(pr) => (

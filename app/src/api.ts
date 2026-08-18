@@ -4,8 +4,17 @@
  * either way (`ui~core-parity~1`).
  */
 
+import { bumpStoreVersion } from "./swr";
+
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const BRIDGE = (import.meta.env.VITE_KANSA_BRIDGE as string | undefined) ?? "http://127.0.0.1:1430";
+
+/** Commands that never change the store; everything else bumps the store version on success. */
+const READ_COMMANDS = new Set([
+  "kansa_home", "list_repos", "list_docs", "repo_status", "doc_view", "doc_state",
+  "list_reqs", "rounds", "list_questions", "list_prs", "pr_docs", "inventory",
+  "list_groups", "prefill_status",
+]);
 
 export const transport: "tauri" | "http" = inTauri ? "tauri" : "http";
 
@@ -20,18 +29,22 @@ export async function pickFolder(): Promise<string | null> {
 }
 
 async function call<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+  let out: T;
   if (inTauri) {
     const { invoke } = await import("@tauri-apps/api/core");
-    return invoke<T>("call", { name, args });
+    out = await invoke<T>("call", { name, args });
+  } else {
+    const res = await fetch(`${BRIDGE}/api/${name}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body?.error ?? `${name} failed (${res.status})`);
+    out = body as T;
   }
-  const res = await fetch(`${BRIDGE}/api/${name}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(args),
-  });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body?.error ?? `${name} failed (${res.status})`);
-  return body as T;
+  if (!READ_COMMANDS.has(name)) bumpStoreVersion();
+  return out;
 }
 
 // ---------- types (mirror kansa-core serde shapes) ----------

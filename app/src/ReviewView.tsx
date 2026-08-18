@@ -95,7 +95,14 @@ const QuestionCard: Component<{ q: Question; github: string; onChanged: () => vo
             </Show>
             <div class="row">
               <input placeholder="Note (optional) — who decided, where" value={note()} onInput={(e) => setNote(e.currentTarget.value)} />
-              <button class="primary" disabled={busy() || !answerKey()} onClick={() => run(() => api.answerQuestion(p.github, slugOf(p.q.id), answerKey(), note().trim() || undefined))}>Answer</button>
+              <button
+                class="primary"
+                disabled={busy() || !answerKey()}
+                onClick={() => run(async () => {
+                  await api.answerQuestion(p.github, slugOf(p.q.id), answerKey(), note().trim() || undefined);
+                  p.toast({ kind: "info", text: "Answered. The flagged sentence is residue again — classify it in the doc to reflect the answer." });
+                })}
+              >Answer</button>
               <button disabled={busy()} onClick={() => run(() => api.withdrawQuestion(p.github, slugOf(p.q.id)))}>Withdraw</button>
             </div>
           </div>

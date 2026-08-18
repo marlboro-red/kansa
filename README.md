@@ -86,4 +86,4 @@ All commands take `--json` for scripting.
 
 `u` next unclassified · `n`/`p` (or `j`/`k`, arrows) move · `⇧`+move extend · `r` requirement (attach/create) · `c` context ·
 `q` question · `x` clear / reject proposal · `⏎` accept proposal · `g` group · `e` show linked requirement · `?` all keys ·
-`ctrl`/`⌘`+scroll (or `+`/`-`/`0`) zoom the page text
+`ctrl`/`⌘`+scroll (or `ctrl`/`⌘` `+`/`-`/`0`) zoom the page text

@@ -5,6 +5,14 @@ import type { Cached } from "./api";
 const mem = new Map<string, unknown>();
 
 /**
+ * Bumped by the api client after every mutating core command. `createCached` resources track it,
+ * so passive views (sidebar residue badges, repo status, inventory) refetch instead of showing
+ * whatever was true when they first mounted.
+ */
+const [storeVersion, setStoreVersion] = createSignal(0);
+export const bumpStoreVersion = () => setStoreVersion((v) => v + 1);
+
+/**
  * Stale-while-revalidate resource over a core `Cached<T>` command: returns memory-cached data
  * immediately, refetches, and keeps polling every `pollMs` while core reports `refreshing`.
  */
@@ -44,13 +52,17 @@ const inflight = new Map<string, Promise<unknown>>();
 
 export function createCached<T>(key: () => string | null, fetcher: (k: string) => Promise<T>) {
   const [res, actions] = createResource(
-    () => key(),
-    async (k) => {
+    // The tuple retriggers the fetch when either the key or the store version changes.
+    () => { const k = key(); return k === null ? null : ([k, storeVersion()] as const); },
+    async ([k, ver]) => {
       // Dedupe concurrent fetches for the same key (several panes ask for repo status at once).
-      let pr = inflight.get(k) as Promise<T> | undefined;
+      // The version is part of the dedupe key so a post-mutation refetch never reuses a
+      // pre-mutation response that is still in flight.
+      const fk = `${k}@${ver}`;
+      let pr = inflight.get(fk) as Promise<T> | undefined;
       if (!pr) {
-        pr = fetcher(k).finally(() => inflight.delete(k));
-        inflight.set(k, pr);
+        pr = fetcher(k).finally(() => inflight.delete(fk));
+        inflight.set(fk, pr);
       }
       const v = await pr;
       mem.set(k, v);

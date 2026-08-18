@@ -24,7 +24,8 @@ import { createCached } from "./swr";
 import type { Proposal } from "./api";
 import type { Context, Decision } from "./api";
 
-export type Toast = { kind: "error" | "info"; text: string };
+/** `sticky` keeps an info toast up until the user clicks it (confirmations worth reading, e.g. export paths). */
+export type Toast = { kind: "error" | "info"; text: string; sticky?: boolean };
 
 type Props = {
   github: string;
@@ -187,10 +188,12 @@ export const Classifier: Component<Props> = (p) => {
     setLinkedReq(null);
     scrollTo(clamped);
   }
+  /** Select the first unclassified sentence at or after `from`, wrapping. Inclusive: `u` on an
+   *  unclassified sentence keeps it selected rather than silently skipping it (`n` skips). */
   function nextUnclassified(from = cursor()) {
     const rs = rows();
-    for (let k = 1; k <= rs.length; k++) {
-      const i = (from + k) % rs.length;
+    for (let k = 0; k <= rs.length; k++) {
+      const i = (((from + k) % rs.length) + rs.length) % rs.length;
       const r = rs[i];
       if (r.status.state === "unclassified" && !r.status.structural) {
         move(i);
@@ -283,7 +286,7 @@ export const Classifier: Component<Props> = (p) => {
     try {
       const r = await api.export(p.github);
       const v = r.validate ? (r.validate.code === 0 ? " · reqtrace validate OK" : ` · reqtrace validate FAILED (${r.validate.code})`) : "";
-      p.toast({ kind: r.validate && r.validate.code !== 0 ? "error" : "info", text: `Exported ${r.items} item(s) → ${r.inventory}${v}` });
+      p.toast({ kind: r.validate && r.validate.code !== 0 ? "error" : "info", text: `Exported ${r.items} item(s) → ${r.inventory}${v}`, sticky: true });
     } catch (e) {
       p.toast({ kind: "error", text: String(e) });
     } finally {
@@ -496,7 +499,7 @@ export const Classifier: Component<Props> = (p) => {
     if (!landed && view() && rows().length) {
       landed = true;
       const target = p.initialSpan ? rows().findIndex((r) => r.span.id === p.initialSpan) : -1;
-      queueMicrotask(() => { if (target >= 0) move(target); else nextUnclassified(-1); });
+      queueMicrotask(() => { if (target >= 0) move(target); else nextUnclassified(0); });
     }
   });
 
@@ -644,7 +647,8 @@ export const Classifier: Component<Props> = (p) => {
           </span>
           <span>{meter().classified}/{meter().total} classified</span>
           <span>· residue <span class="n-res" classList={{ zero: meter().residue === 0 }}>{meter().residue}</span></span>
-          <span class="muted">· {meter().mapped} req · {meter().non_normative} ctx · {meter().questioned} q</span>
+          {/* "mapped", not "req": these count sentences, while the rail's "doc N" counts requirements. */}
+          <span class="muted">· {meter().mapped} mapped · {meter().non_normative} ctx · {meter().questioned} q</span>
         </div>
         <div class="keys">
           <Show when={zoom() !== 1}>

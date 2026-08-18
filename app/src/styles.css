@@ -66,6 +66,8 @@ button:hover:not(:disabled) { border-color: var(--line-2); background: var(--lin
 button:disabled { opacity: 0.45; cursor: default; }
 button.primary { background: var(--amber); color: #1a1408; border-color: transparent; font-weight: 600; }
 button.primary:hover:not(:disabled) { filter: brightness(1.06); background: var(--amber); }
+/* A dimmed amber still reads as "clickable" against the dark chrome — drop to panel colors instead. */
+button.primary:disabled { background: var(--panel-2); color: var(--ink-3); border-color: var(--line); opacity: 1; }
 button.ghost { background: transparent; border-color: transparent; }
 button.ghost:hover:not(:disabled) { background: var(--panel-2); border-color: transparent; }
 input:not([type]), input[type="text"], textarea, select {
@@ -187,7 +189,8 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .topbar select.lens { width: auto; padding: 4px 8px; font-size: 12px; background: var(--panel-2); }
 .topbar .round b { color: var(--ink-2); font-weight: 600; }
 
-.work { display: grid; grid-template-columns: 1fr var(--panel-w, 340px); min-height: 0; }
+/* The min() cap keeps a wide stored panel width from squeezing out the doc pane on a small window. */
+.work { display: grid; grid-template-columns: 1fr min(var(--panel-w, 340px), 40vw); min-height: 0; }
 /* The right panel's drag divider sits over the panel's left border, outside its scroll area. */
 .panelslot { position: relative; display: grid; min-width: 0; min-height: 0; }
 .vsplit { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 6; touch-action: none; }
@@ -297,9 +300,11 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .rail .view { position: absolute; left: 0; right: 0; background: rgba(127, 132, 144, 0.12); pointer-events: none; }
 
 /* inventory panel */
-.inv { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+/* min-width: 0 — the aside is a grid item of .panelslot; without it the panel takes its
+   min-content width (long nowrap ids/chips) and overflows the fixed track off-screen. */
+.inv { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .inv-head { padding: 10px 12px 8px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
-.inv-head input { flex: 1; }
+.inv-head input { flex: 1; min-width: 0; }
 .inv-head .count { font: 11px var(--mono); color: var(--ink-3); white-space: nowrap; }
 .inv-list { overflow: auto; flex: 1; padding: 6px; }
 .req {
@@ -323,7 +328,7 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .drawer .stmt { font-family: var(--serif); font-size: 14px; margin: 6px 0 10px; }
 .drawer .kv { display: grid; grid-template-columns: 78px 1fr; gap: 3px 8px; }
 .drawer .kv dt { color: var(--ink-3); }
-.drawer .kv dd { margin: 0; }
+.drawer .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .drawer .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
 .drawer .grouplist { display: flex; flex-wrap: wrap; gap: 4px; }
 .drawer .chip.grp { display: inline-flex; align-items: center; gap: 3px; }
@@ -559,3 +564,21 @@ table.docs td.c-untrack button { font-size: 11.5px; padding: 2px 8px; color: var
 .repo-add-wrap .repo-add { padding-bottom: 0; }
 .local-btn { align-self: flex-start; margin-left: 8px; font-size: 12px; color: var(--ink-3); padding: 3px 8px; }
 .local-btn:hover { color: var(--ink); }
+
+/* ---------- small screens ----------
+   The content column gives way last: shrink the fixed sidebar and side rails first so
+   statements and the doc pane keep their reading width on laptop-sized windows. */
+@media (max-width: 1280px) {
+  .shell { grid-template-columns: 216px 1fr; }
+  .invview-body { grid-template-columns: minmax(0, 1fr) 248px; }
+  .review-body { grid-template-columns: minmax(0, 1fr) 280px; }
+  .filters input { width: 180px; }
+  .prfilters input:not([type]) { width: 220px; }
+  .repo-pane { padding: 18px 22px; }
+}
+@media (max-width: 1100px) {
+  .shell { grid-template-columns: 184px 1fr; }
+  table.inv-table .c-id { width: 110px; }
+  /* Keep "u next" and "? all keys"; the full list stays one keypress away. */
+  .statusbar .keys span:nth-child(n + 2):not(:last-child) { display: none; }
+}
