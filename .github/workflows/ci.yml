@@ -24,4 +24,5 @@ jobs:
       - name: Tests
         env:
           KANSA_NO_GH: "1"
-        run: cargo test
+        # -p: skip app/src-tauri — the shell has no tests and its Linux build needs GTK/webkit.
+        run: cargo test -p kansa-core -p kansa-cli
