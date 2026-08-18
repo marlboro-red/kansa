@@ -213,6 +213,25 @@ enum ReqCmd {
         #[arg(long, env = "KANSA_USER", default_value_t = whoami())]
         by: String,
     },
+    /// Attach a free-text note (commentary; does not bump the rev, not exported).
+    Note {
+        #[command(flatten)]
+        repo: RepoArg,
+        slug: String,
+        #[arg(long, short = 'm')]
+        text: String,
+        #[arg(long, env = "KANSA_USER", default_value_t = whoami())]
+        by: String,
+    },
+    /// Remove note N (0-based, oldest first) from a requirement.
+    NoteRm {
+        #[command(flatten)]
+        repo: RepoArg,
+        slug: String,
+        index: usize,
+        #[arg(long, env = "KANSA_USER", default_value_t = whoami())]
+        by: String,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -715,6 +734,30 @@ fn main() -> Result<()> {
                 let ws = open(&repo)?;
                 let r = ops::bump_req(&ws, &slug, &statement, &by)?;
                 out(json, &r, |r| format!("bumped to {}", r.id))
+            }
+            ReqCmd::Note {
+                repo,
+                slug,
+                text,
+                by,
+            } => {
+                let ws = open(&repo)?;
+                let r = ops::add_req_note(&ws, &slug, &text, &by)?;
+                out(json, &r, |r| {
+                    format!("{} now has {} note(s)", r.id, r.notes.len())
+                })
+            }
+            ReqCmd::NoteRm {
+                repo,
+                slug,
+                index,
+                by,
+            } => {
+                let ws = open(&repo)?;
+                let r = ops::delete_req_note(&ws, &slug, index, &by)?;
+                out(json, &r, |r| {
+                    format!("{} now has {} note(s)", r.id, r.notes.len())
+                })
             }
         },
     }

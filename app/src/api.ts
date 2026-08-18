@@ -136,8 +136,12 @@ export type Req = {
   suspect?: string | null;
   anchors: { doc: string; span: string }[];
   questions: string[];
+  notes?: ReqNote[];
   history: { at: string; by: string; op: string; note?: string }[];
 };
+
+/** Free-form commentary on a requirement — never bumps the rev, never exported. */
+export type ReqNote = { at: string; by: string; text: string };
 
 export type Question = {
   id: string;
@@ -261,6 +265,8 @@ export const api = {
     patch: { statement?: string; pattern?: Pattern | null; status?: Status; rating?: [Level, Level] | null; owner?: string | null; reason?: string },
   ) => call<Req>("update_req", { github, slug, ...patch }),
   bumpReq: (github: string, slug: string, statement: string) => call<Req>("bump_req", { github, slug, statement }),
+  addReqNote: (github: string, slug: string, text: string) => call<Req>("add_req_note", { github, slug, text }),
+  deleteReqNote: (github: string, slug: string, index: number) => call<Req>("delete_req_note", { github, slug, index }),
   flagQuestion: (
     github: string,
     doc: string,

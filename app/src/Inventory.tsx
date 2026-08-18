@@ -58,6 +58,7 @@ export const Inventory: Component<{
                 <span>{r.anchors.length} anchor{r.anchors.length === 1 ? "" : "s"}</span>
                 <Show when={p.groupsByReq.get(slugOf(r.id))?.length}><span>{p.groupsByReq.get(slugOf(r.id))!.join(", ")}</span></Show>
                 <Show when={r.questions.length}><span class="qbadge">? {r.questions.length}</span></Show>
+                <Show when={r.notes?.length}><span class="nbadge" title="notes">✎ {r.notes!.length}</span></Show>
               </div>
             </button>
           )}

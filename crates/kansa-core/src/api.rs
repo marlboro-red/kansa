@@ -70,6 +70,8 @@ pub const COMMANDS: &[&str] = &[
     "detach_req",
     "update_req",
     "bump_req",
+    "add_req_note",
+    "delete_req_note",
     "flag_question",
     "close_round",
     "list_reqs",
@@ -265,6 +267,24 @@ pub fn call(name: &str, args: &Value) -> Result<Value> {
                 &w,
                 &arg::<String>(args, "slug")?,
                 &arg::<String>(args, "statement")?,
+                &by(args),
+            )?)
+        }
+        "add_req_note" => {
+            let w = ws(args)?;
+            j(ops::add_req_note(
+                &w,
+                &arg::<String>(args, "slug")?,
+                &arg::<String>(args, "text")?,
+                &by(args),
+            )?)
+        }
+        "delete_req_note" => {
+            let w = ws(args)?;
+            j(ops::delete_req_note(
+                &w,
+                &arg::<String>(args, "slug")?,
+                arg::<usize>(args, "index")?,
                 &by(args),
             )?)
         }

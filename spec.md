@@ -66,11 +66,14 @@ Follows reqtrace's item schema so export is a projection, not a translation. req
   reason: null                     # required when status: retired
   anchors: [{doc: docs/hld.md, span: s-8a1f}]   # n:m with spans
   questions: [qst~throttle-window~1]
+  notes:                           # optional free-text commentary, oldest first
+    - {at: 2026-08-18T09:14:00Z, by: cj, text: "PM confirmed the 10-min window on the 12 Aug call."}
   history: [...]
 ```
 
 - `obj~req-revs~1` — Bumping a rev shall keep the prior rev in the file (status frozen as it was); export emits all revs so reqtrace's `stale` check works downstream.
 - `obj~req-suspect~1` — When reconciliation confirms a `meaning-changed` verdict, the affected requirement's current rev gets `suspect: <reason>` (surfaced as a badge and in oversight); the next human edit of statement or status clears it.
+- `obj~req-note~1` — A requirement's current rev may carry free-text `notes` (append + delete, `{at, by, text}`): commentary a human writes for themselves. Notes never bump the rev, never clear `suspect`, and are not exported to reqtrace; they carry forward when a rev is bumped, and each add/remove is recorded in `history`.
 - `obj~req-groups-derived~1` — A requirement's group membership is *not* stored on the requirement; it is derived from `grp.members` at read time (single source of truth, §4.3).
 
 ### 0.3 `qst~` — question

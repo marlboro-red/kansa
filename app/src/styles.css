@@ -301,6 +301,7 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .req .stmt { font-family: var(--serif); font-size: 13.5px; line-height: 1.4; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .req .row3 { display: flex; gap: 8px; margin-top: 4px; font-size: 11px; color: var(--ink-3); }
 .req .qbadge { color: var(--violet); }
+.req .nbadge { color: var(--ink-3); }
 .inv-empty { padding: 28px 16px; color: var(--ink-3); font-size: 12.5px; text-align: center; }
 .inv-empty kbd { color: var(--ink); }
 
@@ -311,6 +312,13 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .drawer .kv dt { color: var(--ink-3); }
 .drawer .kv dd { margin: 0; }
 .drawer .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.drawer .notes { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.drawer .notes .field { margin-top: 6px; }
+.drawer .notes textarea { width: 100%; }
+.drawer .note { padding: 5px 0; border-bottom: 1px solid var(--line); }
+.drawer .note .ntext { white-space: pre-wrap; font-size: 12.5px; }
+.drawer .note .nmeta { display: flex; align-items: center; gap: 6px; font: 11px var(--mono); color: var(--ink-3); }
+.drawer .note .nmeta span { flex: 1; }
 .drawer .hist { margin: 8px 0 0; padding: 0; list-style: none; font: 11px/1.5 var(--mono); color: var(--ink-3); }
 .drawer .anchor { cursor: pointer; color: var(--jade); }
 .drawer .anchor:hover { text-decoration: underline; }

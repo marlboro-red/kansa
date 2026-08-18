@@ -834,6 +834,44 @@ pub fn bump_req(ws: &Workspace, slug: &str, statement: &str, by: &str) -> Result
     Ok(next)
 }
 
+/// Attach a free-text note to a requirement's current rev (`obj~req-note~1`). Notes are
+/// commentary: they never bump the rev, never clear `suspect`, and are not exported.
+pub fn add_req_note(ws: &Workspace, slug: &str, text: &str, by: &str) -> Result<ReqRev> {
+    let text = text.trim();
+    if text.is_empty() {
+        bail!("a note needs text");
+    }
+    let _l = ws.store.lock()?;
+    let mut revs = ws.store.req_revs(slug)?;
+    let cur = revs
+        .last_mut()
+        .ok_or_else(|| anyhow!("no requirement `{slug}`"))?;
+    cur.notes.push(crate::model::Note::new(by, text));
+    cur.history
+        .push(History::new(by, "note").note(text.to_string()));
+    let out = cur.clone();
+    ws.store.save_req_revs(slug, &revs)?;
+    Ok(out)
+}
+
+/// Remove note `idx` (0-based, oldest first) from a requirement's current rev.
+pub fn delete_req_note(ws: &Workspace, slug: &str, idx: usize, by: &str) -> Result<ReqRev> {
+    let _l = ws.store.lock()?;
+    let mut revs = ws.store.req_revs(slug)?;
+    let cur = revs
+        .last_mut()
+        .ok_or_else(|| anyhow!("no requirement `{slug}`"))?;
+    if idx >= cur.notes.len() {
+        bail!("no note {idx} on `{slug}`");
+    }
+    let gone = cur.notes.remove(idx);
+    cur.history
+        .push(History::new(by, "note-remove").note(gone.text));
+    let out = cur.clone();
+    ws.store.save_req_revs(slug, &revs)?;
+    Ok(out)
+}
+
 pub struct NewQuestion<'a> {
     pub quote: &'a str,
     pub materiality: Level,
@@ -1271,8 +1309,20 @@ pub fn export(ws: &Workspace, out_dir: Option<&Path>) -> Result<crate::export::E
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// `file:///…` URL for a local path — Windows paths need forward slashes and the extra
+    /// slash before the drive letter, or libgit2 reads `C:` as a host.
+    pub(crate) fn file_url(p: &Path) -> String {
+        format!(
+            "file:///{}",
+            p.display()
+                .to_string()
+                .replace('\\', "/")
+                .trim_start_matches('/')
+        )
+    }
 
     /// Build a local git repo with a doc, register it under a temp home, track the doc.
     pub(crate) fn fixture() -> (tempfile::TempDir, Workspace) {
@@ -1297,10 +1347,79 @@ mod tests {
         let head = r.head().unwrap().peel_to_commit().unwrap();
         let _ = r.branch("main", &head, true);
         let home = tmp.path().join("home");
-        let url = format!("file://{}", src.display());
+        let url = file_url(&src);
         let ws = register_repo_from_url(&home, "o/n", &url).unwrap();
         track_doc(&ws, "docs/hld.md").unwrap();
         (tmp, ws)
+    }
+
+    #[test]
+    fn req_notes_add_survive_bump_and_delete() {
+        let (_tmp, ws) = fixture();
+        let ctx = ws.default_context().unwrap();
+        let view = doc_view(&ws, &ctx, "docs/hld.md").unwrap();
+        let li = view
+            .snapshot
+            .spans
+            .iter()
+            .find(|s| s.block == crate::segment::Block::Li)
+            .unwrap()
+            .id
+            .clone();
+        create_req(
+            &ws,
+            &ctx,
+            "docs/hld.md",
+            &[li],
+            NewReq {
+                statement: "The email address shall match RFC 5322.",
+                slug: Some("email-format"),
+                pattern: None,
+                rating: None,
+                owner: None,
+            },
+            "cj",
+        )
+        .unwrap();
+
+        let r = add_req_note(
+            &ws,
+            "email-format",
+            "  PM confirmed on 2026-08-12 call.  ",
+            "cj",
+        )
+        .unwrap();
+        assert_eq!(r.notes.len(), 1);
+        assert_eq!(r.notes[0].text, "PM confirmed on 2026-08-12 call."); // trimmed
+        assert_eq!(r.notes[0].by, "cj");
+        assert_eq!(r.id.rev, 1, "a note never bumps the rev");
+        assert_eq!(r.history.last().unwrap().op, "note");
+        assert!(add_req_note(&ws, "email-format", "   ", "cj").is_err());
+
+        add_req_note(&ws, "email-format", "Second note.", "cj").unwrap();
+        // notes carry forward to the next rev
+        let bumped = bump_req(
+            &ws,
+            "email-format",
+            "The email address shall match RFC 5322 §3.4.",
+            "cj",
+        )
+        .unwrap();
+        assert_eq!(bumped.id.rev, 2);
+        assert_eq!(bumped.notes.len(), 2);
+
+        let r = delete_req_note(&ws, "email-format", 0, "cj").unwrap();
+        assert_eq!(r.notes.len(), 1);
+        assert_eq!(r.notes[0].text, "Second note.");
+        assert_eq!(r.history.last().unwrap().op, "note-remove");
+        assert!(delete_req_note(&ws, "email-format", 5, "cj").is_err());
+
+        // the previous rev keeps the notes it had; export ignores notes entirely
+        let revs = ws.store.req_revs("email-format").unwrap();
+        assert_eq!(revs[0].notes.len(), 2);
+        let out = export(&ws, None).unwrap();
+        let inv = std::fs::read_to_string(out.inventory).unwrap();
+        assert!(!inv.contains("Second note."), "notes are not exported");
     }
 
     #[test]

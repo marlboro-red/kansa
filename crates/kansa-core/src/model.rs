@@ -50,6 +50,26 @@ impl History {
     }
 }
 
+/// A free-text note a human attached to a requirement (`obj~req-note~1`): commentary, not
+/// statement — notes never change the rev and are not exported.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Note {
+    #[serde(with = "time::serde::rfc3339")]
+    pub at: OffsetDateTime,
+    pub by: String,
+    pub text: String,
+}
+
+impl Note {
+    pub fn new(by: &str, text: impl Into<String>) -> Self {
+        Note {
+            at: now(),
+            by: by.into(),
+            text: text.into(),
+        }
+    }
+}
+
 /// `{doc, span}` — resolves through the doc's current snapshot (`obj~anchor~1`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Anchor {
@@ -156,6 +176,9 @@ pub struct ReqRev {
     pub anchors: Vec<Anchor>,
     #[serde(default)]
     pub questions: Vec<Id>,
+    /// Human commentary, oldest first (`obj~req-note~1`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Note>,
     #[serde(default)]
     pub history: Vec<History>,
 }
@@ -173,6 +196,7 @@ impl ReqRev {
             suspect: None,
             anchors: vec![],
             questions: vec![],
+            notes: vec![],
             history: vec![History::new(by, "create")],
         }
     }

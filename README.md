@@ -51,6 +51,7 @@ kansa doc track -r owner/name docs/hld.md
 kansa spans -r owner/name -d docs/hld.md --residue
 kansa classify req -r owner/name -d docs/hld.md <span-id>... -s "The system shall …" --pattern ubiquitous
 kansa classify non-normative … | kansa classify question …
+kansa req note <slug> -r owner/name -m "PM confirmed the window on the 12 Aug call."
 kansa status -r owner/name
 kansa close -r owner/name -d docs/hld.md
 kansa export -r owner/name                   # requirements.yaml + not-in-scope.yaml, then `reqtrace validate`

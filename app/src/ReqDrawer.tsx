@@ -20,6 +20,8 @@ export const ReqDrawer: Component<{
   const [retiring, setRetiring] = createSignal(false);
   const [editing, setEditing] = createSignal(false);
   const [draft, setDraft] = createSignal("");
+  const [noteDraft, setNoteDraft] = createSignal("");
+  const [savingNote, setSavingNote] = createSignal(false);
 
   async function setStatus(status: Status) {
     try {
@@ -43,6 +45,29 @@ export const ReqDrawer: Component<{
       if (bump) await api.bumpReq(p.github, slugOf(p.req.id), s);
       else await api.updateReq(p.github, slugOf(p.req.id), { statement: s });
       setEditing(false);
+      p.onChanged();
+    } catch (e) {
+      p.toast({ kind: "error", text: String(e) });
+    }
+  }
+
+  async function addNote() {
+    const text = noteDraft().trim();
+    if (!text || savingNote()) return;
+    setSavingNote(true);
+    try {
+      await api.addReqNote(p.github, slugOf(p.req.id), text);
+      setNoteDraft("");
+      p.onChanged();
+    } catch (e) {
+      p.toast({ kind: "error", text: String(e) });
+    } finally {
+      setSavingNote(false);
+    }
+  }
+  async function removeNote(i: number) {
+    try {
+      await api.deleteReqNote(p.github, slugOf(p.req.id), i);
       p.onChanged();
     } catch (e) {
       p.toast({ kind: "error", text: String(e) });
@@ -106,6 +131,32 @@ export const ReqDrawer: Component<{
           </div>
         </div>
       </Show>
+      <div class="notes">
+        <div class="small muted">notes — commentary only; they never change the rev and are not exported</div>
+        <For each={p.req.notes ?? []}>
+          {(n, i) => (
+            <div class="note">
+              <div class="ntext">{n.text}</div>
+              <div class="nmeta">
+                <span>{n.by} · {n.at.slice(0, 16).replace("T", " ")}</span>
+                <button class="ghost" title="delete note" onClick={() => removeNote(i())}>✕</button>
+              </div>
+            </div>
+          )}
+        </For>
+        <div class="field">
+          <textarea
+            rows={2}
+            placeholder="Add a note — ⌘/Ctrl+⏎ to save"
+            value={noteDraft()}
+            onInput={(e) => setNoteDraft(e.currentTarget.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); addNote(); } }}
+          />
+          <div style={{ display: "flex", "justify-content": "flex-end" }}>
+            <button disabled={!noteDraft().trim() || savingNote()} onClick={addNote}>Add note</button>
+          </div>
+        </div>
+      </div>
       <ul class="hist">
         <For each={p.req.history.slice(-5).reverse()}>{(h) => <li>{h.at.slice(0, 16).replace("T", " ")} · {h.by} · {h.op}{h.note ? ` · ${h.note}` : ""}</li>}</For>
       </ul>

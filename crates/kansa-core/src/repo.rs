@@ -481,7 +481,7 @@ mod tests {
         let _ = r.branch("main", &head, true);
 
         let dest = tempfile::tempdir().unwrap();
-        let url = format!("file://{}", src.path().display());
+        let url = crate::ops::tests::file_url(src.path());
         let bare = clone_or_open(&url, &dest.path().join("clone")).unwrap();
         assert_eq!(default_branch(&bare).unwrap(), "main");
         let docs = list_markdown(&bare, "main").unwrap();
