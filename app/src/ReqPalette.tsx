@@ -48,6 +48,11 @@ export const ReqPalette: Component<{
   });
   const total = () => matches().length + 1; // + create row
 
+  /** Edits in the create form a misclick would destroy — while dirty, only Esc/Cancel close.
+   *  The search view is cheap to retype, so it always closes. */
+  const dirty = () =>
+    creating() && (statement() !== p.selectionText || slug().trim() !== "" || pattern() !== guessPattern(p.selectionText));
+
   onMount(() => { input?.focus(); if (dlg && head) makeDraggable(dlg, head, "req"); });
 
   function choose(i: number) {
@@ -73,7 +78,7 @@ export const ReqPalette: Component<{
   }
 
   return (
-    <div class="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) p.onClose(); }}>
+    <div class="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !dirty()) p.onClose(); }}>
       <div class="dialog" role="dialog" aria-modal="true" ref={dlg} aria-label="Map to requirement">
         <div class="dhead" ref={head} title="Drag to move · double-click to reset">
           <span class="title">{creating() ? "New requirement" : "Map to requirement"}</span>

@@ -22,6 +22,8 @@ export const QuestionDialog: Component<{
   onMount(() => { first?.focus(); if (dlg && head) makeDraggable(dlg, head, "question"); });
 
   const canSubmit = () => quote().trim().length > 0;
+  /** Typed content a misclick would destroy — while dirty, only Esc/Cancel close the dialog. */
+  const dirty = () => readings.some((r) => r.text.trim()) || quote() !== p.quote || def() !== undefined;
   function submit() {
     if (!canSubmit()) return;
     const rs = readings.filter((r) => r.text.trim()).map((r) => ({ key: r.key, text: r.text.trim() }));
@@ -33,7 +35,7 @@ export const QuestionDialog: Component<{
   }
 
   return (
-    <div class="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) p.onClose(); }}>
+    <div class="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !dirty()) p.onClose(); }}>
       <div
         class="dialog"
         role="dialog"
