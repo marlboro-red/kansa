@@ -117,9 +117,9 @@ enum Cmd {
     /// Open the kansa UI: serves the embedded frontend and the command surface on 127.0.0.1
     /// with a per-session token, in a standalone app window (falls back to your browser).
     Ui {
-        /// Port to bind (0 = pick a free port).
-        #[arg(long, default_value_t = 0)]
-        port: u16,
+        /// Port to bind (default: 1424, falling back to a free port if taken; 0 = always free).
+        #[arg(long)]
+        port: Option<u16>,
         /// Print the URL instead of opening anything.
         #[arg(long)]
         no_open: bool,
@@ -409,6 +409,7 @@ fn content_type(path: &str) -> &'static str {
         "ico" => "image/x-icon",
         "woff2" => "font/woff2",
         "json" => "application/json",
+        "webmanifest" => "application/manifest+json",
         _ => "application/octet-stream",
     }
 }
@@ -416,14 +417,22 @@ fn content_type(path: &str) -> &'static str {
 /// Serve the command surface (and, with `ui`, the embedded frontend) on 127.0.0.1.
 /// `token`: when set, every /api call must carry it in `x-kansa-token` — static assets stay
 /// open (they contain no state; the token arrives via the URL the browser was opened with).
-fn serve(port: u16, token: Option<String>, ui: bool, open: Open) -> Result<()> {
-    let server = tiny_http::Server::http(("127.0.0.1", port))
-        .map_err(|e| anyhow!("bind 127.0.0.1:{port}: {e}"))?;
+/// `port: None` — prefer the stable default (a stable origin keeps the browser's app identity,
+/// icons and bookmarks working across launches) but fall back to any free port rather than fail.
+fn serve(port: Option<u16>, token: Option<String>, ui: bool, open: Open) -> Result<()> {
+    const DEFAULT_UI_PORT: u16 = 1424;
+    let server = match port {
+        Some(p) => tiny_http::Server::http(("127.0.0.1", p))
+            .map_err(|e| anyhow!("bind 127.0.0.1:{p}: {e}"))?,
+        None => tiny_http::Server::http(("127.0.0.1", DEFAULT_UI_PORT)).or_else(|_| {
+            tiny_http::Server::http(("127.0.0.1", 0)).map_err(|e| anyhow!("bind 127.0.0.1: {e}"))
+        })?,
+    };
     let bound = server
         .server_addr()
         .to_ip()
         .map(|a| a.port())
-        .unwrap_or(port);
+        .unwrap_or(port.unwrap_or(DEFAULT_UI_PORT));
     if ui {
         let url = format!(
             "http://127.0.0.1:{bound}/?token={}",
@@ -580,7 +589,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let json = cli.json;
     match cli.cmd {
-        Cmd::Serve { port } => serve(port, None, false, Open::None),
+        Cmd::Serve { port } => serve(Some(port), None, false, Open::None),
         Cmd::Ui { port, no_open, browser } => {
             let token = session_token()?;
             let open = if no_open { Open::None } else if browser { Open::Browser } else { Open::AppWindow };

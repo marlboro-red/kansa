@@ -7,7 +7,7 @@ type Submit =
   | { mode: "attach"; slug: string }
   | { mode: "create"; statement: string; slug?: string; pattern?: Pattern; rating?: [Level, Level] };
 
-const PATTERNS: { v: Pattern; label: string; hint: string }[] = [
+export const PATTERNS: { v: Pattern; label: string; hint: string }[] = [
   { v: "ubiquitous", label: "Ubiquitous", hint: "The <system> shall <response>" },
   { v: "event-driven", label: "Event-driven", hint: "When <trigger>, the <system> shall <response>" },
   { v: "state-driven", label: "State-driven", hint: "While <state>, the <system> shall <response>" },

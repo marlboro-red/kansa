@@ -1,7 +1,8 @@
 import { createSignal, For, Show, type Component } from "solid-js";
-import { api, type Req, type Status } from "./api";
+import { api, type Pattern, type Req, type Status } from "./api";
 import { slugOf } from "./Classifier";
 import type { Toast } from "./Classifier";
+import { PATTERNS } from "./ReqPalette";
 
 const STATUSES: Status[] = ["extracted", "assumed", "confirmed", "disputed", "retired"];
 
@@ -47,6 +48,16 @@ export const ReqDrawer: Component<{
       if (bump) await api.bumpReq(p.github, slugOf(p.req.id), s);
       else await api.updateReq(p.github, slugOf(p.req.id), { statement: s });
       setEditing(false);
+      p.onChanged();
+    } catch (e) {
+      p.toast({ kind: "error", text: String(e) });
+    }
+  }
+
+  async function setPattern(v: Pattern | null) {
+    if (v === (p.req.pattern ?? null)) return;
+    try {
+      await api.updateReq(p.github, slugOf(p.req.id), { pattern: v });
       p.onChanged();
     } catch (e) {
       p.toast({ kind: "error", text: String(e) });
@@ -99,7 +110,18 @@ export const ReqDrawer: Component<{
         </div>
       </Show>
       <dl class="kv">
-        <dt>pattern</dt><dd>{p.req.pattern ?? <span class="muted">—</span>}</dd>
+        <dt>pattern</dt>
+        <dd>
+          <select
+            name="pattern"
+            aria-label="EARS pattern"
+            class="inline-select"
+            onChange={(e) => setPattern((e.currentTarget.value || null) as Pattern | null)}
+          >
+            <option value="" selected={!p.req.pattern}>—</option>
+            <For each={PATTERNS}>{(pt) => <option value={pt.v} selected={p.req.pattern === pt.v} title={pt.hint}>{pt.label}</option>}</For>
+          </select>
+        </dd>
         <Show when={p.req.rating}><dt>rating</dt><dd class="mono">[{p.req.rating![0]}, {p.req.rating![1]}]</dd></Show>
         <Show when={p.req.owner}><dt>owner</dt><dd>{p.req.owner}</dd></Show>
         <Show when={p.groups && p.groups.length}>
