@@ -675,6 +675,42 @@ pub struct NewReq<'a> {
     pub owner: Option<&'a str>,
 }
 
+/// An image (or other binary asset) referenced by a tracked doc, read from the bare clone at
+/// the context's head — never from a checkout. `rel` is resolved against the doc's directory;
+/// paths that escape the repo root are rejected.
+pub fn doc_asset(ws: &Workspace, ctx: &Context, doc: &str, rel: &str) -> Result<(String, Vec<u8>)> {
+    if rel.contains("://") || rel.starts_with('/') || rel.contains('\\') {
+        bail!("only repo-relative asset paths are served");
+    }
+    let mut parts: Vec<&str> = doc.split('/').collect();
+    parts.pop(); // the doc's directory
+    for seg in rel.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                if parts.pop().is_none() {
+                    bail!("asset path escapes the repo: {rel}");
+                }
+            }
+            s => parts.push(s),
+        }
+    }
+    let path = parts.join("/");
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        _ => bail!("unsupported asset type: .{ext}"),
+    };
+    let bytes = repo::read_blob_raw(&ws.git, &ws.refname(ctx), &path)?
+        .ok_or_else(|| anyhow!("no such file at the current head: {path}"))?;
+    Ok((mime.to_string(), bytes))
+}
+
 /// `r` — create a requirement anchored to spans.
 pub fn create_req(
     ws: &Workspace,
@@ -1380,6 +1416,14 @@ pub(crate) mod tests {
         )
         .unwrap();
         std::fs::write(src.join("README.md"), "# readme\n").unwrap();
+        // a real (tiny) image and a git-LFS pointer, for doc_asset
+        std::fs::create_dir_all(src.join("docs/img")).unwrap();
+        std::fs::write(src.join("docs/img/arch.png"), b"\x89PNG\r\n\x1a\nfakepng").unwrap();
+        std::fs::write(
+            src.join("docs/img/diagram.png"),
+            format!("version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize 8\n", "ab".repeat(32)),
+        )
+        .unwrap();
         let mut idx = r.index().unwrap();
         idx.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
             .unwrap();
@@ -1395,6 +1439,35 @@ pub(crate) mod tests {
         let ws = register_repo_from_url(&home, "o/n", &url).unwrap();
         track_doc(&ws, "docs/hld.md").unwrap();
         (tmp, ws)
+    }
+
+    #[test]
+    fn doc_asset_blobs_lfs_and_traversal() {
+        let (_tmp, ws) = fixture();
+        let ctx = ws.default_context().unwrap();
+
+        // Plain blob, path relative to the doc's directory.
+        let (mime, bytes) = doc_asset(&ws, &ctx, "docs/hld.md", "img/arch.png").unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(bytes, b"\x89PNG\r\n\x1a\nfakepng");
+
+        // LFS pointer: resolved from the clone's lfs object store (placed here as if fetched).
+        let oid = "ab".repeat(32);
+        let obj = ws.git.path().join("lfs").join("objects").join(&oid[..2]).join(&oid[2..4]).join(&oid);
+        std::fs::create_dir_all(obj.parent().unwrap()).unwrap();
+        std::fs::write(&obj, b"real-png").unwrap();
+        let (_, lfs_bytes) = doc_asset(&ws, &ctx, "docs/hld.md", "img/diagram.png").unwrap();
+        assert_eq!(lfs_bytes, b"real-png", "pointer resolved to the LFS object");
+
+        // `..` within the repo is fine; escaping the root or absolute/URL paths are not.
+        assert!(doc_asset(&ws, &ctx, "docs/hld.md", "../docs/img/arch.png").is_ok());
+        assert!(doc_asset(&ws, &ctx, "docs/hld.md", "../../outside.png").is_err());
+        assert!(doc_asset(&ws, &ctx, "docs/hld.md", "/abs.png").is_err());
+        assert!(doc_asset(&ws, &ctx, "docs/hld.md", "https://x/y.png").is_err());
+        // unsupported extension
+        assert!(doc_asset(&ws, &ctx, "docs/hld.md", "../README.md").is_err());
+        // missing file
+        assert!(doc_asset(&ws, &ctx, "docs/hld.md", "img/nope.png").is_err());
     }
 
     #[test]

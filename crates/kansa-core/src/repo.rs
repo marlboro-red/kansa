@@ -8,7 +8,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{Cred, FetchOptions, RemoteCallbacks, Repository};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 const REFSPECS: [&str; 2] = [
@@ -296,6 +296,66 @@ pub fn read_blob(repo: &Repository, refname: &str, path: &str) -> Result<Option<
         .ok_or_else(|| anyhow!("{path} is not a file"))?;
     let content = String::from_utf8_lossy(blob.content()).into_owned();
     Ok(Some((content, blob.id().to_string())))
+}
+
+/// Raw bytes of a blob at a ref — images and other binary assets. Resolves git-LFS pointers:
+/// the object is read from the clone's `lfs/objects` store, after a targeted `git lfs fetch`
+/// if it isn't there yet (requires `git-lfs`; the error says so when it's missing).
+pub fn read_blob_raw(repo: &Repository, refname: &str, path: &str) -> Result<Option<Vec<u8>>> {
+    let commit = resolve_commit(repo, refname)?;
+    let tree = commit.tree()?;
+    let entry = match tree.get_path(Path::new(path)) {
+        Ok(e) => e,
+        Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let obj = entry.to_object(repo)?;
+    let blob = obj
+        .as_blob()
+        .ok_or_else(|| anyhow!("{path} is not a file"))?;
+    let bytes = blob.content();
+    if let Some(oid) = lfs_pointer_oid(bytes) {
+        return Ok(Some(read_lfs_object(repo, &commit.id().to_string(), path, &oid)?));
+    }
+    Ok(Some(bytes.to_vec()))
+}
+
+/// `sha256` oid of a git-LFS pointer file, or None for regular content.
+pub fn lfs_pointer_oid(bytes: &[u8]) -> Option<String> {
+    if !bytes.starts_with(b"version https://git-lfs.github.com/spec/") {
+        return None;
+    }
+    let text = std::str::from_utf8(bytes).ok()?;
+    text.lines()
+        .find_map(|l| l.strip_prefix("oid sha256:"))
+        .map(|o| o.trim().to_string())
+}
+
+fn lfs_object_path(repo: &Repository, oid: &str) -> PathBuf {
+    // Bare clone: the LFS store lives under the git dir itself.
+    repo.path().join("lfs").join("objects").join(&oid[..2]).join(&oid[2..4]).join(oid)
+}
+
+fn read_lfs_object(repo: &Repository, commit: &str, path: &str, oid: &str) -> Result<Vec<u8>> {
+    let obj = lfs_object_path(repo, oid);
+    if !obj.exists() {
+        // Targeted fetch of just this path at this commit. Uses the system git — same policy
+        // as every other network operation here.
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo.path())
+            .args(["lfs", "fetch", "origin", commit, "-I", path])
+            .output()
+            .map_err(|e| anyhow!("running git lfs: {e} — is git-lfs installed?"))?;
+        if !out.status.success() {
+            bail!(
+                "git lfs fetch failed for {path}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+    }
+    std::fs::read(&obj)
+        .with_context(|| format!("LFS object for {path} not present after fetch ({oid})"))
 }
 
 /// All markdown paths at a ref, forward-slash, sorted.

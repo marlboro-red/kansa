@@ -247,6 +247,8 @@ table.docs tr.clickable:hover td { background: var(--panel); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
 .docinner .html { font: 0.78125em/1.45 var(--mono); color: var(--ink-3); white-space: pre-wrap; margin: 0 0 1em; }
+.docinner img.docimg { max-width: 100%; display: block; margin: 0.5em 0; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); min-height: 24px; }
+.docinner .sp .img { color: var(--ink-3); }
 
 /* every span */
 .sp {

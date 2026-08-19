@@ -494,6 +494,46 @@ export const Classifier: Component<Props> = (p) => {
     onCleanup(() => docEl?.removeEventListener("wheel", onWheel));
   });
 
+  // ---- doc images: fill in `img[data-asset]` from the bare clone via the tokened API.
+  // Data URIs, cached per (view, path); a failed load degrades to the alt-text placeholder.
+  function hydrateImages() {
+    const root = docEl;
+    if (!root) return;
+    for (const img of Array.from(root.querySelectorAll<HTMLImageElement>("img.docimg[data-asset]:not([data-hydrating])"))) {
+      img.setAttribute("data-hydrating", "1");
+      const path = img.dataset.asset!;
+      const key = `${viewKey()}:${path}`;
+      let uri = assetMem.get(key);
+      if (!uri) {
+        uri = api.docAsset(p.github, p.doc, path, ctx()).then((a) => `data:${a.mime};base64,${a.base64}`);
+        assetMem.set(key, uri);
+        uri.catch(() => assetMem.delete(key)); // transient failures (e.g. LFS fetch) can retry
+      }
+      uri.then(
+        (u) => { img.src = u; },
+        (e) => {
+          const em = document.createElement("em");
+          em.className = "img";
+          em.textContent = `[image: ${img.alt || path}]`;
+          em.title = String(e);
+          img.replaceWith(em);
+        },
+      );
+    }
+  }
+  // A MutationObserver, not a rows() effect: the doc pane re-renders its spans on its own
+  // schedule (snapshot swaps, reconciliation adopt), and an effect's microtask can land
+  // between the state change and the DOM carrying the new <img> elements.
+  onMount(() => {
+    let raf = 0;
+    const mo = new MutationObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(hydrateImages); });
+    if (docEl) {
+      mo.observe(docEl, { childList: true, subtree: true });
+      hydrateImages();
+    }
+    onCleanup(() => { mo.disconnect(); cancelAnimationFrame(raf); });
+  });
+
   // On first load: an explicit anchor wins, then the remembered scroll/selection from the last
   // visit this session (`ui~scroll-restore~1`), then the first unclassified prose span.
   let landed = false;
@@ -756,6 +796,9 @@ function persistViewMem() {
 
 /** Group-lens selection per repo (session-lived). */
 const lensMem = new Map<string, string | null>();
+
+/** Doc image data-URIs per (view, path) — images rarely change within a session. */
+const assetMem = new Map<string, Promise<string>>();
 
 const PANEL_KEY = "kansa.panelW";
 const DEFAULT_PANEL_W = 340;

@@ -64,6 +64,7 @@ pub const COMMANDS: &[&str] = &[
     "repo_status",
     "doc_view",
     "doc_state",
+    "doc_asset",
     "mark_non_normative",
     "unmark",
     "create_req",
@@ -194,6 +195,18 @@ pub fn call(name: &str, args: &Value) -> Result<Value> {
                 &arg::<String>(args, "doc")?,
                 sha.as_deref(),
             )?)
+        }
+        "doc_asset" => {
+            use base64::Engine as _;
+            let w = ws(args)?;
+            let c = ctx_of(&w, args)?;
+            let (mime, bytes) = ops::doc_asset(
+                &w,
+                &c,
+                &arg::<String>(args, "doc")?,
+                &arg::<String>(args, "path")?,
+            )?;
+            j(json!({"mime": mime, "base64": base64::engine::general_purpose::STANDARD.encode(bytes)}))
         }
         "doc_state" => {
             let w = ws(args)?;

@@ -45,6 +45,7 @@ pub fn segment(src: &str) -> Vec<Piece> {
         list_depth: 0,
         in_table_head: false,
         stack: vec![],
+        pending_image: None,
     };
     for (ev, range) in parser {
         seg.event(ev, range);
@@ -80,6 +81,10 @@ struct Segmenter<'a> {
     list_depth: u8,
     in_table_head: bool,
     stack: Vec<Frame>,
+    /// Full `![alt](url)` range of an open image: the alt text keeps its role as the span's
+    /// *text* (so ids don't move) but carries the image's whole range, so rendered slices
+    /// include the syntax and the frontend can show the actual image.
+    pending_image: Option<Range<usize>>,
 }
 
 impl<'a> Segmenter<'a> {
@@ -175,8 +180,8 @@ impl<'a> Segmenter<'a> {
                 Tag::Emphasis
                 | Tag::Strong
                 | Tag::Strikethrough
-                | Tag::Link { .. }
-                | Tag::Image { .. } => {}
+                | Tag::Link { .. } => {}
+                Tag::Image { .. } => self.pending_image = Some(range.clone()),
                 Tag::BlockQuote(_)
                 | Tag::Table(_)
                 | Tag::FootnoteDefinition(_)
@@ -196,6 +201,12 @@ impl<'a> Segmenter<'a> {
                         self.emit(Block::Heading, text, r, level);
                     }
                 }
+                TagEnd::Image => {
+                    // Zero-width piece at the closing `)`: multi-piece alts end at the last
+                    // alt fragment otherwise, clipping `](url)` out of the rendered slice.
+                    self.pending_image = None;
+                    self.push_inline("", range.end..range.end);
+                }
                 TagEnd::List(_) => self.list_depth = self.list_depth.saturating_sub(1),
                 TagEnd::Item => {
                     self.flush_item();
@@ -211,7 +222,11 @@ impl<'a> Segmenter<'a> {
                 }
                 _ => {}
             },
-            Event::Text(t) => self.push_inline(&t, range),
+            Event::Text(t) => {
+                // Alt text of an open image: keep the text, carry the image's full range.
+                let r = self.pending_image.take().unwrap_or(range);
+                self.push_inline(&t, r);
+            }
             Event::Code(t) => self.push_inline(&t, range),
             Event::InlineMath(t) | Event::DisplayMath(t) => self.push_inline(&t, range),
             Event::Html(t) | Event::InlineHtml(t) => self.push_inline(&t, range),
@@ -426,6 +441,19 @@ mod tests {
             .into_iter()
             .map(|p| (p.block, p.text))
             .collect()
+    }
+
+    #[test]
+    fn image_spans_alt_text_full_syntax_range() {
+        let src = "Intro line.\n\n![lockout flow](img/flow.png)\n\nAfter line.\n";
+        let ps = segment(src);
+        let img = ps.iter().find(|p| p.text == "lockout flow").expect("alt text is the span text");
+        // The range must cover the whole `![alt](url)` so the renderer sees the image syntax.
+        assert_eq!(&src[img.range.clone()], "![lockout flow](img/flow.png)");
+        // Mid-paragraph images keep surrounding sentence text intact.
+        let ps2 = segment("See ![the diagram](a/b.png) for details.\n");
+        assert_eq!(ps2.len(), 1);
+        assert_eq!(ps2[0].text, "See the diagram for details.");
     }
 
     #[test]

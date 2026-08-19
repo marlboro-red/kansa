@@ -32,7 +32,7 @@ const TOKEN: string | null = (() => {
 
 /** Commands that never change the store; everything else bumps the store version on success. */
 const READ_COMMANDS = new Set([
-  "kansa_home", "list_dirs", "list_repos", "list_docs", "repo_status", "doc_view", "doc_state",
+  "kansa_home", "list_dirs", "list_repos", "list_docs", "repo_status", "doc_view", "doc_state", "doc_asset",
   "list_reqs", "rounds", "list_questions", "list_prs", "pr_docs", "inventory",
   "list_groups", "prefill_status",
 ]);
@@ -283,6 +283,9 @@ export const api = {
   repoStatus: (github: string) => call<RepoStatus>("repo_status", { github }),
   docView: (github: string, doc: string, context?: Context, sha?: string) => call<DocView>("doc_view", { github, doc, context, sha }),
   docState: (github: string, doc: string, context?: Context) => call<DocState>("doc_state", { github, doc, context }),
+  /** Doc-relative binary asset (images) at the context head, from the bare clone; resolves git-LFS pointers. */
+  docAsset: (github: string, doc: string, path: string, context?: Context) =>
+    call<{ mime: string; base64: string }>("doc_asset", { github, doc, path, context }),
   listReqs: (github: string) => call<Req[]>("list_reqs", { github }),
 
   markNonNormative: (github: string, doc: string, spans: string[], context?: Context) =>
