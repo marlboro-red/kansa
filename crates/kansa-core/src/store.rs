@@ -23,7 +23,9 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const SEGMENTER_VERSION: u32 = 1;
+// v2: image/link spans carry the full `![alt](url)` / `[text](url)` source range (text and
+// therefore span ids are unchanged from v1 — old snapshots refresh in place, see doc_view_at).
+pub const SEGMENTER_VERSION: u32 = 2;
 
 // ---------- process-wide read caches ----------
 //
@@ -375,6 +377,15 @@ impl Store {
         let p = self.snapshot_path(&snap.doc, &snap.sha);
         if p.exists() {
             return Ok(()); // immutable
+        }
+        self.write_yaml(&p, snap)
+    }
+    /// Overwrite a snapshot with a re-derived one after a segmenter upgrade. Callers must have
+    /// verified every span id is preserved — anchors resolve by id (`obj~span-id~1`).
+    pub fn replace_snapshot(&self, snap: &crate::snapshot::Snapshot) -> Result<()> {
+        let p = self.snapshot_path(&snap.doc, &snap.sha);
+        if let Some(c) = SNAP_CACHE.get() {
+            c.lock().unwrap().remove(&p);
         }
         self.write_yaml(&p, snap)
     }

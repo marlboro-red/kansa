@@ -617,7 +617,12 @@ fn collect_markdown(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) -
             collect_markdown(root, &path, out)?;
         } else if ft.is_file() {
             let lower = name.to_ascii_lowercase();
-            if lower.ends_with(".md") || lower.ends_with(".markdown") {
+            // Markdown, plus the images docs reference (Word/pandoc exports keep them beside
+            // the doc in media/) — without them doc_asset has nothing to serve.
+            const KEEP: [&str; 9] = [
+                ".md", ".markdown", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp",
+            ];
+            if KEEP.iter().any(|ext| lower.ends_with(ext)) {
                 let rel = path
                     .strip_prefix(root)
                     .unwrap_or(&path)

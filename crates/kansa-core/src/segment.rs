@@ -45,7 +45,7 @@ pub fn segment(src: &str) -> Vec<Piece> {
         list_depth: 0,
         in_table_head: false,
         stack: vec![],
-        pending_image: None,
+        pending_inline: None,
     };
     for (ev, range) in parser {
         seg.event(ev, range);
@@ -81,10 +81,11 @@ struct Segmenter<'a> {
     list_depth: u8,
     in_table_head: bool,
     stack: Vec<Frame>,
-    /// Full `![alt](url)` range of an open image: the alt text keeps its role as the span's
-    /// *text* (so ids don't move) but carries the image's whole range, so rendered slices
-    /// include the syntax and the frontend can show the actual image.
-    pending_image: Option<Range<usize>>,
+    /// Full `![alt](url)` / `[text](url)` range of an open image or link: the inner text keeps
+    /// its role as the span's *text* (so ids don't move) but the first text piece carries the
+    /// whole range, so rendered slices include the syntax and the frontend can render the
+    /// actual image/link instead of a clipped `[text` fragment.
+    pending_inline: Option<Range<usize>>,
 }
 
 impl<'a> Segmenter<'a> {
@@ -179,9 +180,8 @@ impl<'a> Segmenter<'a> {
                 }
                 Tag::Emphasis
                 | Tag::Strong
-                | Tag::Strikethrough
-                | Tag::Link { .. } => {}
-                Tag::Image { .. } => self.pending_image = Some(range.clone()),
+                | Tag::Strikethrough => {}
+                Tag::Link { .. } | Tag::Image { .. } => self.pending_inline = Some(range.clone()),
                 Tag::BlockQuote(_)
                 | Tag::Table(_)
                 | Tag::FootnoteDefinition(_)
@@ -201,10 +201,10 @@ impl<'a> Segmenter<'a> {
                         self.emit(Block::Heading, text, r, level);
                     }
                 }
-                TagEnd::Image => {
-                    // Zero-width piece at the closing `)`: multi-piece alts end at the last
-                    // alt fragment otherwise, clipping `](url)` out of the rendered slice.
-                    self.pending_image = None;
+                TagEnd::Image | TagEnd::Link => {
+                    // Zero-width piece at the closing `)`: multi-piece inner text ends at the
+                    // last fragment otherwise, clipping `](url)` out of the rendered slice.
+                    self.pending_inline = None;
                     self.push_inline("", range.end..range.end);
                 }
                 TagEnd::List(_) => self.list_depth = self.list_depth.saturating_sub(1),
@@ -223,8 +223,8 @@ impl<'a> Segmenter<'a> {
                 _ => {}
             },
             Event::Text(t) => {
-                // Alt text of an open image: keep the text, carry the image's full range.
-                let r = self.pending_image.take().unwrap_or(range);
+                // First text of an open image/link: keep the text, carry the full syntax range.
+                let r = self.pending_inline.take().unwrap_or(range);
                 self.push_inline(&t, r);
             }
             Event::Code(t) => self.push_inline(&t, range),
@@ -454,6 +454,20 @@ mod tests {
         let ps2 = segment("See ![the diagram](a/b.png) for details.\n");
         assert_eq!(ps2.len(), 1);
         assert_eq!(ps2[0].text, "See the diagram for details.");
+    }
+
+    #[test]
+    fn link_spans_cover_full_syntax_range() {
+        // Sentence-final link: the slice must include `](url)`, not stop at `[something`.
+        let src = "Details are in [the spec](https://x/spec).\n";
+        let ps = segment(src);
+        assert_eq!(ps.len(), 1);
+        assert_eq!(ps[0].text, "Details are in the spec.");
+        assert!(&src[ps[0].range.clone()].contains("[the spec](https://x/spec)"), "slice: {}", &src[ps[0].range.clone()]);
+        // Sentence-initial link: the slice must include the opening `[`.
+        let src2 = "[RFC 5322](https://r) governs the format.\n";
+        let ps2 = segment(src2);
+        assert!(&src2[ps2[0].range.clone()].starts_with("[RFC 5322](https://r)"), "slice: {}", &src2[ps2[0].range.clone()]);
     }
 
     #[test]

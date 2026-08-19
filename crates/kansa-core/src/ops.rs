@@ -541,6 +541,24 @@ pub fn doc_view_at(ws: &Workspace, ctx: &Context, doc: &str, sha: Option<&str>) 
             .map(|(c, _)| c)
             .unwrap_or_default(),
     };
+    // A newer segmenter refreshes derived spans in place — but only when every span id is
+    // preserved, so anchors can never silently shift (`obj~span-id~1`). A future bump that
+    // changes ids leaves old snapshots alone; those need a real doc change to migrate.
+    let snap = if snap.segmenter != crate::store::SEGMENTER_VERSION && !source.is_empty() {
+        let fresh = crate::snapshot::Snapshot::build(doc, &source);
+        let same = fresh.sha == snap.sha
+            && fresh.spans.len() == snap.spans.len()
+            && fresh.spans.iter().zip(snap.spans.iter()).all(|(a, b)| a.id == b.id);
+        if same {
+            let _l = ws.store.lock()?;
+            ws.store.replace_snapshot(&fresh)?;
+            std::sync::Arc::new(fresh)
+        } else {
+            snap
+        }
+    } else {
+        snap
+    };
     let coverage = doc_coverage(&ws.store, ctx, &snap)?;
     let round = ws.store.open_round(ctx, doc)?;
     let pending = ws.store.pending(ctx, doc)?;
@@ -1439,6 +1457,23 @@ pub(crate) mod tests {
         let ws = register_repo_from_url(&home, "o/n", &url).unwrap();
         track_doc(&ws, "docs/hld.md").unwrap();
         (tmp, ws)
+    }
+
+    #[test]
+    fn local_folder_import_carries_images() {
+        // A Word/pandoc-style export: doc at the root, images in media/. The backing repo
+        // must include them or doc_asset serves "no such file" (the Windows bug).
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("export");
+        std::fs::create_dir_all(src.join("media")).unwrap();
+        std::fs::write(src.join("hld.md"), "# H\n\n![fig](media/image1.png)\n\nA sentence.\n").unwrap();
+        std::fs::write(src.join("media/image1.png"), b"\x89PNG\r\n\x1a\npixels").unwrap();
+        let ws = register_local_in(&tmp.path().join("home"), &src).unwrap();
+        track_doc(&ws, "hld.md").unwrap();
+        let ctx = ws.default_context().unwrap();
+        let (mime, bytes) = doc_asset(&ws, &ctx, "hld.md", "media/image1.png").unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(bytes, b"\x89PNG\r\n\x1a\npixels");
     }
 
     #[test]

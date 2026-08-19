@@ -501,7 +501,10 @@ export const Classifier: Component<Props> = (p) => {
     if (!root) return;
     for (const img of Array.from(root.querySelectorAll<HTMLImageElement>("img.docimg[data-asset]:not([data-hydrating])"))) {
       img.setAttribute("data-hydrating", "1");
-      const path = img.dataset.asset!;
+      // Markdown URLs are often percent-encoded (pandoc writes media/image%201.png for spaces).
+      const raw = img.dataset.asset!;
+      let path = raw;
+      try { path = decodeURIComponent(raw); } catch { /* keep raw */ }
       const key = `${viewKey()}:${path}`;
       let uri = assetMem.get(key);
       if (!uri) {

@@ -1,6 +1,6 @@
 doc: docs/hld.md
 sha: 91ade7c205550638eaec0ff27c9f53ca800b3411
-segmenter: 1
+segmenter: 2
 spans:
 - id: s-156bef76
   ord: 0
