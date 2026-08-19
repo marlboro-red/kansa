@@ -262,14 +262,29 @@ pub fn run_agent(prompt: &str) -> Result<String> {
         child.stdin.take().unwrap().write_all(prompt.as_bytes())?;
         child.wait_with_output()?
     } else {
+        // The prompt goes on stdin, never argv: it is tens of KB with newlines and quotes,
+        // which Windows' `cmd /C` mangles or truncates (8K line limit) — claude then answers
+        // a garbled prompt with exit 0 and no JSON array.
         let mut c = claude_cmd();
-        c.arg("-p").arg(prompt).arg("--output-format").arg("text");
+        c.arg("-p").arg("--output-format").arg("text");
         if let Some(m) = agent_model() {
             c.arg("--model").arg(m);
         }
         c.env_remove("CLAUDECODE"); // allow nesting when launched from inside Claude Code
-        c.output()
-            .context("running `claude -p` (is Claude Code installed and logged in?)")?
+        c.stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = c
+            .spawn()
+            .context("running `claude -p` (is Claude Code installed and logged in?)")?;
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .expect("stdin piped")
+            .write_all(prompt.as_bytes())
+            .context("writing prompt to `claude -p`")?;
+        child.wait_with_output()?
     };
     if !out.status.success() {
         bail!(
@@ -283,12 +298,18 @@ pub fn run_agent(prompt: &str) -> Result<String> {
 
 /// Extract the JSON array from model output (tolerates prose/fences around it).
 pub fn parse_output(raw: &str) -> Result<Vec<Proposal>> {
+    // Show what the agent actually said — "no JSON array" alone is undebuggable.
+    let snippet = || {
+        let t = raw.trim();
+        let head: String = t.chars().take(200).collect();
+        if head.is_empty() { "(empty output)".into() } else { format!("agent said: {head}…") }
+    };
     let start = raw
         .find('[')
-        .ok_or_else(|| anyhow!("no JSON array in agent output"))?;
+        .ok_or_else(|| anyhow!("no JSON array in agent output — {}", snippet()))?;
     let end = raw
         .rfind(']')
-        .ok_or_else(|| anyhow!("no JSON array end in agent output"))?;
+        .ok_or_else(|| anyhow!("no JSON array end in agent output — {}", snippet()))?;
     let json = &raw[start..=end];
     let wire: Vec<WireProposal> = serde_json::from_str(json)
         .with_context(|| format!("parsing agent JSON: {}", &json[..json.len().min(200)]))?;
