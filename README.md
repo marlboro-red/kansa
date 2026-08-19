@@ -79,6 +79,7 @@ kansa spans -r owner/name -d docs/hld.md --residue
 kansa classify req -r owner/name -d docs/hld.md <span-id>... -s "The system shall …" --pattern ubiquitous
 kansa classify non-normative … | kansa classify question …
 kansa req note <slug> -r owner/name -m "PM confirmed the window on the 12 Aug call."
+kansa req delete <slug> -r owner/name        # hard-delete a mistake (young reqs only; else retire)
 kansa group add -r owner/name "Lockout"        # then: group assign|unassign|list|update
 kansa group assign -r owner/name lockout <req-slug>...
 kansa status -r owner/name

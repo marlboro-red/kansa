@@ -270,6 +270,15 @@ impl Store {
         req_cache().invalidate(&p);
         self.save_revs("reqs", slug, revs)
     }
+    /// Remove a requirement file outright — only `ops::delete_req` (gated) calls this.
+    pub fn delete_req_file(&self, slug: &str) -> Result<()> {
+        let p = self.slug_path("reqs", slug)?;
+        req_cache().invalidate(&p);
+        if p.exists() {
+            std::fs::remove_file(&p)?;
+        }
+        Ok(())
+    }
     /// Every requirement file, as its list of revs (newest last).
     pub fn all_reqs(&self) -> Result<Vec<Vec<ReqRev>>> {
         let mut out = vec![];

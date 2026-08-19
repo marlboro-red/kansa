@@ -21,6 +21,7 @@ export const ReqDrawer: Component<{
 }> = (p) => {
   const [retireReason, setRetireReason] = createSignal("");
   const [retiring, setRetiring] = createSignal(false);
+  const [confirmingDelete, setConfirmingDelete] = createSignal(false);
   const [editing, setEditing] = createSignal(false);
   const [draft, setDraft] = createSignal("");
   const [noteDraft, setNoteDraft] = createSignal("");
@@ -50,6 +51,19 @@ export const ReqDrawer: Component<{
       setEditing(false);
       p.onChanged();
     } catch (e) {
+      p.toast({ kind: "error", text: String(e) });
+    }
+  }
+
+  async function doDelete() {
+    try {
+      await api.deleteReq(p.github, slugOf(p.req.id));
+      p.toast({ kind: "info", text: `Deleted ${p.req.id} — its sentences are residue again.` });
+      p.onClose();
+      p.onChanged();
+    } catch (e) {
+      setConfirmingDelete(false);
+      // The gate explains itself (judged / multi-rev / questions / exported → retire instead).
       p.toast({ kind: "error", text: String(e) });
     }
   }
@@ -157,6 +171,14 @@ export const ReqDrawer: Component<{
           {(s) => <button onClick={() => setStatus(s)}>{s === "retired" ? "retire…" : s}</button>}
         </For>
         <Show when={p.onGroup}><button onClick={p.onGroup}>+ group</button></Show>
+        <Show
+          when={confirmingDelete()}
+          fallback={<button class="ghost danger" title="Hard-delete a mistake — only young requirements (unjudged, single rev, never exported)" onClick={() => setConfirmingDelete(true)}>delete…</button>}
+        >
+          <span class="small muted">really delete?</span>
+          <button class="danger" onClick={doDelete}>Delete</button>
+          <button class="ghost" onClick={() => setConfirmingDelete(false)}>keep</button>
+        </Show>
       </div>
       <Show when={retiring()}>
         <div class="field" style={{ "margin-top": "8px" }}>

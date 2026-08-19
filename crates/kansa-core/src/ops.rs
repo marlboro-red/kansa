@@ -816,6 +816,50 @@ pub fn update_req(ws: &Workspace, slug: &str, patch: ReqPatch<'_>, by: &str) -> 
     Ok(out)
 }
 
+/// Hard-delete a requirement that never left the store (`obj~req-delete~1`): status still
+/// `extracted`, a single rev, no attached questions, and created after the last export — so no
+/// downstream repo can hold a `Covers:` reference to its id. Anything past that window must be
+/// retired instead, which keeps the id resolvable for reqtrace's stale check.
+pub fn delete_req(ws: &Workspace, slug: &str, by: &str) -> Result<()> {
+    let _l = ws.store.lock()?;
+    let revs = ws.store.req_revs(slug)?;
+    let cur = revs.last().ok_or_else(|| anyhow!("no requirement `{slug}`"))?;
+    if revs.len() > 1 {
+        bail!("`{slug}` has {} revs — its history matters; retire it instead", revs.len());
+    }
+    if cur.status != Status::Extracted {
+        bail!("`{slug}` is {} — someone has judged it; retire it instead", cur.status.as_str());
+    }
+    if !cur.questions.is_empty() {
+        bail!("`{slug}` has {} attached question(s) — resolve or withdraw them first", cur.questions.len());
+    }
+    if let Some(exp) = ws.store.last_export()? {
+        // Created before (or indistinguishable from) the last export ⇒ its id was published.
+        let created = revs
+            .first()
+            .and_then(|r| r.history.first())
+            .map(|h| h.at)
+            .ok_or_else(|| anyhow!("`{slug}` has no creation record — retire it instead"))?;
+        if created <= exp.at {
+            bail!("`{slug}` was included in the export of {} — downstream repos may reference it; retire it instead", exp.at);
+        }
+    }
+    // Drop it from any groups (single lock is already held — inline, don't re-lock).
+    for g in ws.store.current_grps()? {
+        if g.members.iter().any(|m| m.slug == slug) {
+            let mut grevs = ws.store.grp_revs(&g.id.slug)?;
+            let gc = grevs.last_mut().expect("current group exists");
+            let before = gc.members.clone();
+            gc.members.retain(|m| m.slug != slug);
+            gc.history
+                .push(History::new(by, "members").change(Some(&before), Some(&gc.members)));
+            ws.store.save_grp_revs(&g.id.slug, &grevs)?;
+        }
+    }
+    // Anchors live on the requirement, so removing the file returns its sentences to residue.
+    ws.store.delete_req_file(slug)
+}
+
 /// Bump a requirement to a new rev (meaning changed). Prior rev is kept (`obj~req-revs~1`).
 pub fn bump_req(ws: &Workspace, slug: &str, statement: &str, by: &str) -> Result<ReqRev> {
     let _l = ws.store.lock()?;
@@ -1351,6 +1395,64 @@ pub(crate) mod tests {
         let ws = register_repo_from_url(&home, "o/n", &url).unwrap();
         track_doc(&ws, "docs/hld.md").unwrap();
         (tmp, ws)
+    }
+
+    #[test]
+    fn delete_req_gates_and_cleanup() {
+        let (_tmp, ws) = fixture();
+        let ctx = ws.default_context().unwrap();
+        let view = doc_view(&ws, &ctx, "docs/hld.md").unwrap();
+        let mut paras = view
+            .snapshot
+            .spans
+            .iter()
+            .filter(|s| s.block == crate::segment::Block::Para)
+            .map(|s| s.id.clone());
+        let (s1, s2, s3) = (
+            paras.next().unwrap(),
+            paras.next().unwrap(),
+            paras.next().unwrap(),
+        );
+        let mk = |span: &String, slug: &str| {
+            create_req(
+                &ws,
+                &ctx,
+                "docs/hld.md",
+                std::slice::from_ref(span),
+                NewReq { statement: "The system shall X.", slug: Some(slug), pattern: None, rating: None, owner: None },
+                "cj",
+            )
+            .unwrap()
+        };
+
+        // Young + grouped → delete cleans the group and returns the sentence to residue.
+        mk(&s1, "oops");
+        let g = create_group(&ws, "Lockout", None, "cj").unwrap();
+        assign_group(&ws, &g.id.slug, &["oops".into()], "cj").unwrap();
+        delete_req(&ws, "oops", "cj").unwrap();
+        assert!(ws.store.current_req("oops").unwrap().is_none());
+        let g2 = ws.store.current_grps().unwrap().into_iter().find(|x| x.id.slug == g.id.slug).unwrap();
+        assert!(g2.members.is_empty(), "group membership cleaned up");
+        let cov = doc_coverage(&ws.store, &ctx, &doc_view(&ws, &ctx, "docs/hld.md").unwrap().snapshot).unwrap();
+        let st = cov.spans.iter().find(|(id, _)| id == &s1).unwrap();
+        assert_eq!(st.1.state, crate::coverage::SpanState::Unclassified, "sentence is residue again");
+
+        // Judged (status changed) → refuse.
+        mk(&s2, "judged");
+        update_req(&ws, "judged", ReqPatch { statement: None, pattern: None, status: Some(Status::Confirmed), rating: None, owner: None, reason: None }, "cj").unwrap();
+        assert!(delete_req(&ws, "judged", "cj").is_err());
+
+        // Multi-rev → refuse.
+        mk(&s3, "bumped");
+        bump_req(&ws, "bumped", "The system shall X, differently.", "cj").unwrap();
+        assert!(delete_req(&ws, "bumped", "cj").is_err());
+
+        // Exported → refuse (its id is published; downstream may reference it).
+        let exported = mk(&paras.next().unwrap(), "published");
+        assert_eq!(exported.id.rev, 1);
+        export(&ws, None).unwrap();
+        let err = delete_req(&ws, "published", "cj").unwrap_err().to_string();
+        assert!(err.contains("export"), "gate names the export: {err}");
     }
 
     #[test]

@@ -305,6 +305,8 @@ export const api = {
     patch: { statement?: string; pattern?: Pattern | null; status?: Status; rating?: [Level, Level] | null; owner?: string | null; reason?: string },
   ) => call<Req>("update_req", { github, slug, ...patch }),
   bumpReq: (github: string, slug: string, statement: string) => call<Req>("bump_req", { github, slug, statement }),
+  /** Gated server-side: only extracted, single-rev, question-free reqs created after the last export. */
+  deleteReq: (github: string, slug: string) => call<void>("delete_req", { github, slug }),
   addReqNote: (github: string, slug: string, text: string) => call<Req>("add_req_note", { github, slug, text }),
   deleteReqNote: (github: string, slug: string, index: number) => call<Req>("delete_req_note", { github, slug, index }),
   flagQuestion: (

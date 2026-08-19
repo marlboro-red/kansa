@@ -331,7 +331,7 @@ export const InventoryView: Component<{
               <button onClick={createGroup} disabled={!newGroup().trim()}>Add</button>
             </div>
             <For each={groups() ?? []} fallback={<p class="muted" style={{ "font-size": "12px" }}>Groups are umbrella labels for oversight — “validation”, “lockout”… Select requirements and press <kbd>g</kbd>.</p>}>
-              {(g) => <GroupCard g={g} active={groupFilter() === g.group.title} onClick={() => setGroupFilter(groupFilter() === g.group.title ? "" : g.group.title)} />}
+              {(g) => <GroupCard g={g} active={groupFilter() === g.group.title} onClick={() => setGroupFilter(groupFilter() === g.group.title ? "" : g.group.title)} github={p.github} onChanged={refetchAll} toast={p.toast} />}
             </For>
           </div>
         </aside>
@@ -349,10 +349,13 @@ function shortPath(p: string) {
   return parts.length > 4 ? `…/${parts.slice(-3).join("/")}` : p;
 }
 
-const GroupCard: Component<{ g: GroupRollup; active: boolean; onClick: () => void }> = (p) => {
+const GroupCard: Component<{ g: GroupRollup; active: boolean; onClick: () => void; github: string; onChanged: () => void; toast: (t: Toast | null) => void }> = (p) => {
   const total = () => Object.values(p.g.members_by_status).reduce((a, b) => a + b, 0);
+  async function act(f: () => Promise<unknown>) {
+    try { await f(); p.onChanged(); } catch (e) { p.toast({ kind: "error", text: String(e) }); }
+  }
   return (
-    <button class="groupcard" classList={{ active: p.active }} onClick={p.onClick}>
+    <div class="groupcard" classList={{ active: p.active }} role="button" tabindex="0" onClick={p.onClick} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); p.onClick(); } }}>
       <div class="row1"><b>{p.g.group.title}</b><span class="muted mono">{p.g.group.members.length}</span></div>
       <Show when={p.g.group.description}><div class="muted desc">{p.g.group.description}</div></Show>
       <div class="bar">
@@ -360,8 +363,23 @@ const GroupCard: Component<{ g: GroupRollup; active: boolean; onClick: () => voi
       </div>
       <div class="row3 muted">
         <span>{p.g.open_questions ? `? ${p.g.open_questions}` : "no open questions"}</span>
-        <Show when={p.g.findings.length}><span class="loud">{p.g.findings.length} finding{p.g.findings.length === 1 ? "" : "s"}: {p.g.findings.map((f) => `${f.member} ${f.kind}`).join(", ")}</span></Show>
+        <For each={p.g.findings}>
+          {(f) => (
+            <span class="finding" onClick={(e) => e.stopPropagation()}>
+              <span class="loud mono">{f.member}</span> <span class="loud">{f.kind}</span>
+              <Show
+                when={f.kind === "stale-rev"}
+                fallback={
+                  <button class="small-btn" title="Remove this member from the group" onClick={() => act(() => api.unassignGroup(p.github, slugOf(p.g.group.id), [slugOf(f.member)]))}>remove</button>
+                }
+              >
+                {/* meaning changed since it was grouped — re-pin = "yes, the new rev still belongs" */}
+                <button class="small-btn" title="Confirm the new rev still belongs in this group" onClick={() => act(() => api.assignGroup(p.github, slugOf(p.g.group.id), [slugOf(f.member)]))}>confirm rev</button>
+              </Show>
+            </span>
+          )}
+        </For>
       </div>
-    </button>
+    </div>
   );
 };

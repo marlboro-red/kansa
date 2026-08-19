@@ -232,6 +232,15 @@ enum ReqCmd {
         #[arg(long, env = "KANSA_USER", default_value_t = whoami())]
         by: String,
     },
+    /// Hard-delete a mistake: only extracted, single-rev, question-free requirements created
+    /// after the last export. Anything older: retire with a reason instead.
+    Delete {
+        #[command(flatten)]
+        repo: RepoArg,
+        slug: String,
+        #[arg(long, env = "KANSA_USER", default_value_t = whoami())]
+        by: String,
+    },
     /// Attach a free-text note (commentary; does not bump the rev, not exported).
     Note {
         #[command(flatten)]
@@ -965,6 +974,13 @@ fn main() -> Result<()> {
                 let ws = open(&repo)?;
                 let r = ops::bump_req(&ws, &slug, &statement, &by)?;
                 out(json, &r, |r| format!("bumped to {}", r.id))
+            }
+            ReqCmd::Delete { repo, slug, by } => {
+                let ws = open(&repo)?;
+                ops::delete_req(&ws, &slug, &by)?;
+                out(json, &serde_json::json!({"deleted": slug}), |_| {
+                    format!("deleted req~{slug} — its sentences are residue again")
+                })
             }
             ReqCmd::Note {
                 repo,
