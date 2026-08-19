@@ -50,9 +50,13 @@ cargo install --path crates/kansa-cli
 ## Run
 
 ```sh
-kansa ui                                     # serves the app on 127.0.0.1 (per-session token) and opens your browser
-kansa ui --port 8080 --no-open               # fixed port, print the URL instead
+kansa ui                                     # serves the app on 127.0.0.1 (per-session token) in a standalone window
+kansa ui --browser                           # …in a normal browser tab instead
+kansa ui --port 8080 --no-open               # fixed port, just print the URL
 ```
+
+The standalone window uses your installed Chromium browser's app mode (Edge/Chrome/…);
+without one it falls back to a regular tab.
 
 Development loops:
 

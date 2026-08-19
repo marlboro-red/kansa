@@ -114,15 +114,18 @@ enum Cmd {
         #[arg(long, default_value_t = 1430)]
         port: u16,
     },
-    /// Open the kansa UI in your browser: serves the embedded frontend and the command surface
-    /// on 127.0.0.1 with a per-session token.
+    /// Open the kansa UI: serves the embedded frontend and the command surface on 127.0.0.1
+    /// with a per-session token, in a standalone app window (falls back to your browser).
     Ui {
         /// Port to bind (0 = pick a free port).
         #[arg(long, default_value_t = 0)]
         port: u16,
-        /// Print the URL instead of opening a browser.
+        /// Print the URL instead of opening anything.
         #[arg(long)]
         no_open: bool,
+        /// Open a normal browser tab instead of a standalone app window.
+        #[arg(long)]
+        browser: bool,
     },
 }
 
@@ -413,7 +416,7 @@ fn content_type(path: &str) -> &'static str {
 /// Serve the command surface (and, with `ui`, the embedded frontend) on 127.0.0.1.
 /// `token`: when set, every /api call must carry it in `x-kansa-token` — static assets stay
 /// open (they contain no state; the token arrives via the URL the browser was opened with).
-fn serve(port: u16, token: Option<String>, ui: bool, open: bool) -> Result<()> {
+fn serve(port: u16, token: Option<String>, ui: bool, open: Open) -> Result<()> {
     let server = tiny_http::Server::http(("127.0.0.1", port))
         .map_err(|e| anyhow!("bind 127.0.0.1:{port}: {e}"))?;
     let bound = server
@@ -430,8 +433,14 @@ fn serve(port: u16, token: Option<String>, ui: bool, open: bool) -> Result<()> {
         if UI_ASSETS.get_file("index.html").is_none() {
             eprintln!("warning: no embedded UI assets — build with `cd app && npm run build`, then rebuild kansa");
         }
-        if open {
-            open_browser(&url);
+        match open {
+            Open::AppWindow => {
+                if !open_app_window(&url) {
+                    open_browser(&url);
+                }
+            }
+            Open::Browser => open_browser(&url),
+            Open::None => {}
         }
     } else {
         eprintln!("kansa dev bridge on http://127.0.0.1:{bound}/api/<command>  (POST JSON args)");
@@ -496,6 +505,59 @@ fn serve(port: u16, token: Option<String>, ui: bool, open: bool) -> Result<()> {
 
 const MISSING_UI: &str = "<!doctype html><meta charset=utf-8><title>kansa</title><body style=\"font:14px system-ui;padding:40px\"><h1>UI assets not embedded</h1><p>This binary was built without the frontend. Build it with:</p><pre>cd app &amp;&amp; npm install &amp;&amp; npm run build\ncargo build --release -p kansa-cli</pre>";
 
+#[derive(Clone, Copy, PartialEq)]
+enum Open {
+    /// Chromium `--app` window (chromeless, own taskbar entry); browser tab if none found.
+    AppWindow,
+    Browser,
+    None,
+}
+
+/// Best-effort standalone window via a Chromium browser's `--app` mode. Returns false when no
+/// candidate browser could be launched — the caller falls back to a normal tab.
+fn open_app_window(url: &str) -> bool {
+    use std::process::Command;
+    let app_arg = format!("--app={url}");
+    match std::env::consts::OS {
+        "macos" => {
+            // `open -na <App> --args --app=…` — a running instance picks the args up too.
+            for app in ["Google Chrome", "Microsoft Edge", "Chromium", "Brave Browser"] {
+                let ok = Command::new("open")
+                    .args(["-na", app, "--args", &app_arg])
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if ok {
+                    return true;
+                }
+            }
+            false
+        }
+        "windows" => {
+            // Browsers are not on PATH; `start` resolves them via the App Paths registry.
+            for exe in ["msedge", "chrome"] {
+                let ok = Command::new("cmd")
+                    .args(["/c", "start", "", exe, &app_arg])
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if ok {
+                    return true;
+                }
+            }
+            false
+        }
+        _ => {
+            for exe in ["google-chrome", "chromium", "chromium-browser", "microsoft-edge", "brave-browser"] {
+                if Command::new(exe).arg(&app_arg).spawn().is_ok() {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+}
+
 fn open_browser(url: &str) {
     use std::process::Command;
     let r = match std::env::consts::OS {
@@ -518,10 +580,11 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let json = cli.json;
     match cli.cmd {
-        Cmd::Serve { port } => serve(port, None, false, false),
-        Cmd::Ui { port, no_open } => {
+        Cmd::Serve { port } => serve(port, None, false, Open::None),
+        Cmd::Ui { port, no_open, browser } => {
             let token = session_token()?;
-            serve(port, Some(token), true, !no_open)
+            let open = if no_open { Open::None } else if browser { Open::Browser } else { Open::AppWindow };
+            serve(port, Some(token), true, open)
         }
         Cmd::Repo { cmd } => match cmd {
             RepoCmd::Add { github, url } => {
